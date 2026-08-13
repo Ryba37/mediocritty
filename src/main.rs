@@ -1,3 +1,11 @@
+use winit::event_loop::EventLoop;
+
+mod app;
+mod gpu;
+
 fn main() {
-    todo!()
+    let event_loop = EventLoop::new().expect("failed to create loop");
+
+    let mut app = app::App::default();
+    let _ = event_loop.run_app(&mut app);
 }
