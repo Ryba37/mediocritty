@@ -122,12 +122,15 @@ impl GpuCtx {
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
 
-        self.text.prepare(
+        if let Err(e) = self.text.prepare(
             &self.device,
             &self.queue,
             self.config.width,
             self.config.height,
-        );
+        ) {
+            eprintln!("text prepare failed: {e}");
+            return;
+        }
 
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -152,7 +155,11 @@ impl GpuCtx {
                 multiview_mask: None,
             });
 
-            self.text.render(&mut pass);
+            let _ = self.text.render(&mut pass);
+
+            if let Err(e) = self.text.render(&mut pass) {
+                eprintln!("text render failed: {e}");
+            }
         }
 
         self.queue.submit(Some(encoder.finish()));

@@ -53,39 +53,44 @@ impl TextCtx {
         self.buffer.shape_until_scroll(&mut self.font_system, false);
     }
 
-    pub fn prepare(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, width: u32, height: u32) {
+    pub fn prepare(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        width: u32,
+        height: u32,
+    ) -> Result<(), glyphon::PrepareError> {
         self.viewport.update(queue, Resolution { width, height });
 
-        self.renderer
-            .prepare(
-                device,
-                queue,
-                &mut self.font_system,
-                &mut self.atlas,
-                &self.viewport,
-                [TextArea {
-                    buffer: &self.buffer,
-                    left: 0.0,
-                    top: 0.0,
-                    scale: 1.0,
-                    bounds: TextBounds {
-                        left: 0,
-                        top: 0,
-                        right: width as i32,
-                        bottom: height as i32,
-                    },
-                    default_color: glyphon::Color::rgb(220, 220, 220),
-                    custom_glyphs: &[],
-                }],
-                &mut self.swash_cache,
-            )
-            .unwrap();
+        self.renderer.prepare(
+            device,
+            queue,
+            &mut self.font_system,
+            &mut self.atlas,
+            &self.viewport,
+            [TextArea {
+                buffer: &self.buffer,
+                left: 0.0,
+                top: 0.0,
+                scale: 1.0,
+                bounds: TextBounds {
+                    left: 0,
+                    top: 0,
+                    right: width as i32,
+                    bottom: height as i32,
+                },
+                default_color: glyphon::Color::rgb(220, 220, 220),
+                custom_glyphs: &[],
+            }],
+            &mut self.swash_cache,
+        )
     }
 
-    pub fn render<'a>(&'a self, pass: &mut wgpu::RenderPass<'a>) {
-        self.renderer
-            .render(&self.atlas, &self.viewport, pass)
-            .unwrap();
+    pub fn render<'a>(
+        &'a self,
+        pass: &mut wgpu::RenderPass<'a>,
+    ) -> Result<(), glyphon::RenderError> {
+        self.renderer.render(&self.atlas, &self.viewport, pass)
     }
 
     pub fn trim_atlas(&mut self) {
