@@ -10,6 +10,10 @@ pub struct TextCtx {
     atlas: TextAtlas,
     renderer: TextRenderer,
     buffer: Buffer,
+    cell_width: f32,
+    cell_height: f32,
+    cols: usize,
+    rows: usize,
 }
 
 impl TextCtx {
@@ -17,8 +21,8 @@ impl TextCtx {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         format: wgpu::TextureFormat,
-        cols: usize,
-        rows: usize,
+        width: u32,
+        height: u32,
     ) -> Self {
         let mut font_system = FontSystem::new();
         let swash_cache = SwashCache::new();
@@ -29,8 +33,16 @@ impl TextCtx {
             TextRenderer::new(&mut atlas, device, wgpu::MultisampleState::default(), None);
 
         let metrics = Metrics::new(16.0, 20.0);
+        let (cell_width, cell_height) = measure_cell(&mut font_system, metrics);
+
+        let cols = ((width as f32 / cell_width).floor() as usize).max(1);
+        let rows = ((height as f32 / cell_height).floor() as usize).max(1);
+
         let mut buffer = Buffer::new(&mut font_system, metrics);
-        buffer.set_size(Some(cols as f32 * 10.0), Some(rows as f32 * 20.0));
+        buffer.set_size(
+            Some(cols as f32 * cell_width),
+            Some(rows as f32 * cell_height),
+        );
 
         Self {
             font_system,
@@ -39,6 +51,10 @@ impl TextCtx {
             atlas,
             renderer,
             buffer,
+            cell_width,
+            cell_height,
+            cols,
+            rows,
         }
     }
 
@@ -50,6 +66,25 @@ impl TextCtx {
             None,
         );
 
+        self.buffer.shape_until_scroll(&mut self.font_system, false);
+    }
+
+    // dirty flag: перекладываем сетку только когда меняется число колонок/строк,
+    // а не на каждый пиксель ресайза окна
+    pub fn resize(&mut self, width: u32, height: u32) {
+        let cols = ((width as f32 / self.cell_width).floor() as usize).max(1);
+        let rows = ((height as f32 / self.cell_height).floor() as usize).max(1);
+
+        if cols == self.cols && rows == self.rows {
+            return;
+        }
+
+        self.cols = cols;
+        self.rows = rows;
+        self.buffer.set_size(
+            Some(cols as f32 * self.cell_width),
+            Some(rows as f32 * self.cell_height),
+        );
         self.buffer.shape_until_scroll(&mut self.font_system, false);
     }
 
@@ -96,4 +131,25 @@ impl TextCtx {
     pub fn trim_atlas(&mut self) {
         self.atlas.trim();
     }
+}
+
+fn measure_cell(font_system: &mut FontSystem, metrics: Metrics) -> (f32, f32) {
+    let mut probe = Buffer::new(font_system, metrics);
+    probe.set_size(None, None);
+    probe.set_text(
+        "M",
+        &Attrs::new().family(Family::Monospace),
+        Shaping::Advanced,
+        None,
+    );
+    probe.shape_until_scroll(font_system, false);
+
+    let width = probe
+        .layout_runs()
+        .next()
+        .map(|run| run.line_w)
+        .filter(|w| *w > 0.0)
+        .unwrap_or(metrics.font_size * 0.6);
+
+    (width, metrics.line_height)
 }

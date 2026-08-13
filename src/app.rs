@@ -28,10 +28,11 @@ impl ApplicationHandler for App {
                 .unwrap(),
         );
         window.request_redraw();
+
         match pollster::block_on(GpuCtx::new(window)) {
             Ok(gpu) => self.gpu = Some(gpu),
             Err(e) => {
-                eprintln!("gpu initialization error: {e}");
+                eprintln!("ошибка инициализации GPU: {e}");
                 event_loop.exit();
             }
         }

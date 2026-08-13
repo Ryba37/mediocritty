@@ -26,7 +26,7 @@ impl GpuCtx {
 
         let surface = instance
             .create_surface(window.clone())
-            .map_err(|e| format!("unable to create surface: {e}"))?;
+            .map_err(|e| format!("не удалось создать surface: {e}"))?;
 
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
@@ -36,7 +36,7 @@ impl GpuCtx {
                 apply_limit_buckets: false,
             })
             .await
-            .map_err(|_| "could not find suitable gpu".to_string())?;
+            .map_err(|_| "не найден подходящий GPU-адаптер".to_string())?;
 
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
@@ -48,7 +48,7 @@ impl GpuCtx {
                 experimental_features: wgpu::ExperimentalFeatures::disabled(),
             })
             .await
-            .map_err(|e| format!("unable to get device: {e}"))?;
+            .map_err(|e| format!("не удалось получить device: {e}"))?;
 
         let caps = surface.get_capabilities(&adapter);
         let format = caps
@@ -71,7 +71,8 @@ impl GpuCtx {
         };
         surface.configure(&device, &config);
 
-        let mut text = text::TextCtx::new(&device, &queue, config.format, 80, 20);
+        let mut text =
+            text::TextCtx::new(&device, &queue, config.format, config.width, config.height);
 
         text.set_text("hello world");
 
@@ -92,6 +93,7 @@ impl GpuCtx {
         self.config.width = width;
         self.config.height = height;
         self.surface.configure(&self.device, &self.config);
+        self.text.resize(width, height);
     }
 
     pub fn render(&mut self) {
@@ -154,8 +156,6 @@ impl GpuCtx {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-
-            let _ = self.text.render(&mut pass);
 
             if let Err(e) = self.text.render(&mut pass) {
                 eprintln!("text render failed: {e}");
