@@ -99,10 +99,7 @@ impl GpuCtx {
     pub fn render(&mut self) {
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(f) => f,
-            wgpu::CurrentSurfaceTexture::Suboptimal(f) => {
-                // рендерим этот кадр, но surface надо переконфигурировать перед следующим
-                f
-            }
+            wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
             wgpu::CurrentSurfaceTexture::Timeout
             | wgpu::CurrentSurfaceTexture::Occluded
             | wgpu::CurrentSurfaceTexture::Validation => return,
@@ -164,5 +161,7 @@ impl GpuCtx {
 
         self.queue.submit(Some(encoder.finish()));
         self.queue.present(frame);
+
+        self.text.trim_atlas();
     }
 }

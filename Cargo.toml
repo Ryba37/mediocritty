@@ -2,6 +2,7 @@
 name = "mediocritty"
 version = "0.1.0"
 edition = "2024"
+license = "Apache-2.0"
 
 [dependencies]
 glyphon = "0.12.0"
