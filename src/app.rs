@@ -8,11 +8,15 @@ use winit::window::{Window, WindowId};
 #[derive(Default)]
 pub struct App {
     gpu: Option<GpuCtx>,
+    pending_size: Option<(u32, u32)>,
 }
 
 impl App {
     pub fn new() -> Self {
-        App { gpu: None }
+        App {
+            gpu: None,
+            pending_size: None,
+        }
     }
 }
 
@@ -50,8 +54,13 @@ impl ApplicationHandler for App {
                 println!("The close button was pressed; stopping");
                 event_loop.exit();
             }
-            WindowEvent::Resized(size) => gpu.resize(size.width, size.height),
+            WindowEvent::Resized(size) => {
+                self.pending_size = Some((size.width, size.height));
+            }
             WindowEvent::RedrawRequested => {
+                if let Some((w, h)) = self.pending_size.take() {
+                    gpu.resize(w, h);
+                }
                 gpu.render();
                 gpu.window.request_redraw();
             }
