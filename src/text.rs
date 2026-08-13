@@ -69,8 +69,6 @@ impl TextCtx {
         self.buffer.shape_until_scroll(&mut self.font_system, false);
     }
 
-    // dirty flag: перекладываем сетку только когда меняется число колонок/строк,
-    // а не на каждый пиксель ресайза окна
     pub fn resize(&mut self, width: u32, height: u32) {
         let cols = ((width as f32 / self.cell_width).floor() as usize).max(1);
         let rows = ((height as f32 / self.cell_height).floor() as usize).max(1);
