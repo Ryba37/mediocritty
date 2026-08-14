@@ -30,6 +30,7 @@ pub struct MetalCtx {
     vertex_count: usize,
     instance_buffer: Buffer,
     instance_count: usize,
+    color_buffer: Buffer,
 }
 
 impl MetalCtx {
@@ -81,27 +82,26 @@ impl MetalCtx {
             .newRenderPipelineStateWithDescriptor_error(&desc)
             .map_err(|e| format!("pipeline: {e}"))?;
 
-        let positions: [[f32; 2]; 3] = [[0.0, 0.5], [-0.5, -0.5], [0.5, -0.5]];
-
-        let vertex_buffer = unsafe {
-            device.newBufferWithBytes_length_options(
-                NonNull::from(&positions).cast(),
-                size_of_val(&positions),
-                MTLResourceOptions::StorageModeShared,
-            )
-        }
-        .ok_or_else(|| "couldn't create vertex buffer".to_string())?;
+        let positions: [[f32; 2]; 6] = [
+            [-0.2, -0.2],
+            [0.2, -0.2],
+            [0.2, 0.2],
+            [-0.2, -0.2],
+            [0.2, 0.2],
+            [-0.2, 0.2],
+        ];
 
         let offsets: [[f32; 2]; 3] = [[-0.6, 0.0], [0.0, 0.0], [0.6, 0.0]];
 
-        let instance_buffer = unsafe {
-            device.newBufferWithBytes_length_options(
-                NonNull::from(&offsets).cast(),
-                size_of_val(&offsets),
-                MTLResourceOptions::StorageModeShared,
-            )
-        }
-        .ok_or_else(|| "couldn't create instance buffer".to_string())?;
+        let colors: [[f32; 4]; 3] = [
+            [1.0, 0.3, 0.3, 1.0],
+            [0.3, 1.0, 0.3, 1.0],
+            [0.3, 0.3, 1.0, 1.0],
+        ];
+
+        let vertex_buffer = Self::make_buffer(&device, &positions)?;
+        let instance_buffer = Self::make_buffer(&device, &offsets)?;
+        let color_buffer = Self::make_buffer(&device, &colors)?;
 
         Ok(Self {
             device,
@@ -112,6 +112,7 @@ impl MetalCtx {
             vertex_count: positions.len(),
             instance_buffer,
             instance_count: offsets.len(),
+            color_buffer,
         })
     }
 
@@ -151,6 +152,8 @@ impl MetalCtx {
 
             encoder.setVertexBuffer_offset_atIndex(Some(&self.vertex_buffer), 0, 0);
             encoder.setVertexBuffer_offset_atIndex(Some(&self.instance_buffer), 0, 1);
+            encoder.setVertexBuffer_offset_atIndex(Some(&self.color_buffer), 0, 2);
+
             encoder.drawPrimitives_vertexStart_vertexCount_instanceCount(
                 MTLPrimitiveType::Triangle,
                 0,
@@ -171,5 +174,20 @@ impl MetalCtx {
             panic!("not macos");
         };
         unsafe { Retained::retain(handle.ns_view.as_ptr().cast()).unwrap() }
+    }
+
+    fn make_buffer<T>(device: &Device, data: &[T]) -> Result<Buffer, String> {
+        if data.is_empty() {
+            return Err("empty buffer".to_string());
+        }
+
+        unsafe {
+            device.newBufferWithBytes_length_options(
+                NonNull::from(data).cast(),
+                size_of_val(data),
+                MTLResourceOptions::StorageModeShared,
+            )
+        }
+        .ok_or_else(|| "couldn't create buffer".to_string())
     }
 }
