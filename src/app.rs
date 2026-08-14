@@ -13,7 +13,7 @@ pub struct App {
 
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.window.is_some() {
+        if self.renderer.is_some() {
             return;
         }
 

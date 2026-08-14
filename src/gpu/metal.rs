@@ -6,10 +6,12 @@ use objc2_core_foundation::CGSize;
 use objc2_foundation::NSString;
 use objc2_metal::{
     MTLBuffer, MTLClearColor, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDevice,
-    MTLDrawable, MTLLibrary, MTLLoadAction, MTLPixelFormat, MTLPrimitiveType,
+    MTLDrawable, MTLLibrary, MTLLoadAction, MTLOrigin, MTLPixelFormat, MTLPrimitiveType, MTLRegion,
     MTLRenderCommandEncoder, MTLRenderPassDescriptor, MTLRenderPipelineDescriptor,
-    MTLRenderPipelineState, MTLResourceOptions, MTLStoreAction,
+    MTLRenderPipelineState, MTLResourceOptions, MTLSamplerDescriptor, MTLSamplerMinMagFilter,
+    MTLSize, MTLStoreAction, MTLTextureDescriptor,
 };
+use objc2_metal::{MTLSamplerState, MTLTexture};
 use objc2_quartz_core::{CAMetalDrawable, CAMetalLayer};
 use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use winit::window::Window;
@@ -18,8 +20,11 @@ type Device = Retained<ProtocolObject<dyn MTLDevice>>;
 type Queue = Retained<ProtocolObject<dyn MTLCommandQueue>>;
 type Pipeline = Retained<ProtocolObject<dyn MTLRenderPipelineState>>;
 type Buffer = Retained<ProtocolObject<dyn MTLBuffer>>;
+type Texture = Retained<ProtocolObject<dyn MTLTexture>>;
+type Sampler = Retained<ProtocolObject<dyn MTLSamplerState>>;
 
 const PIXEL_FORMAT: MTLPixelFormat = MTLPixelFormat::BGRA8Unorm_sRGB;
+const CELL: [f32; 2] = [20.0, 40.0];
 
 pub struct MetalCtx {
     device: Device,
@@ -32,6 +37,8 @@ pub struct MetalCtx {
     instance_count: usize,
     color_buffer: Buffer,
     uniform_buffer: Buffer,
+    texture: Texture,
+    sampler: Sampler,
 }
 
 #[repr(C)]
@@ -107,7 +114,7 @@ impl MetalCtx {
         ];
 
         let uniforms = Uniforms {
-            cell: [20.0, 40.0],
+            cell: CELL,
             screen: [size.width as f32, size.height as f32],
         };
 
@@ -115,6 +122,49 @@ impl MetalCtx {
         let instance_buffer = Self::make_buffer(&device, &offsets)?;
         let color_buffer = Self::make_buffer(&device, &colors)?;
         let uniform_buffer = Self::make_buffer(&device, &[uniforms])?;
+
+        let text_desc = unsafe {
+            MTLTextureDescriptor::texture2DDescriptorWithPixelFormat_width_height_mipmapped(
+                MTLPixelFormat::RGBA8Unorm,
+                2,
+                2,
+                false,
+            )
+        };
+
+        let texture = device
+            .newTextureWithDescriptor(&text_desc)
+            .ok_or_else(|| "couldn't create texture".to_string())?;
+
+        let pixels: [u8; 16] = [
+            255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255,
+        ];
+
+        let region = MTLRegion {
+            origin: MTLOrigin { x: 0, y: 0, z: 0 },
+            size: MTLSize {
+                width: 2,
+                height: 2,
+                depth: 1,
+            },
+        };
+
+        unsafe {
+            texture.replaceRegion_mipmapLevel_withBytes_bytesPerRow(
+                region,
+                0,
+                NonNull::from(&pixels).cast(),
+                8,
+            );
+        }
+
+        let sampler_desc = MTLSamplerDescriptor::new();
+        sampler_desc.setMinFilter(MTLSamplerMinMagFilter::Nearest);
+        sampler_desc.setMagFilter(MTLSamplerMinMagFilter::Nearest);
+
+        let sampler = device
+            .newSamplerStateWithDescriptor(&sampler_desc)
+            .ok_or_else(|| "couldn't create sampler".to_string())?;
 
         Ok(Self {
             device,
@@ -127,6 +177,8 @@ impl MetalCtx {
             instance_count: offsets.len(),
             color_buffer,
             uniform_buffer,
+            texture,
+            sampler,
         })
     }
 
@@ -134,6 +186,18 @@ impl MetalCtx {
         self.layer.setContentsScale(scale_factor);
         self.layer
             .setDrawableSize(CGSize::new(width as f64, height as f64));
+
+        let uniforms = Uniforms {
+            cell: CELL,
+            screen: [width as f32, height as f32],
+        };
+
+        unsafe {
+            self.uniform_buffer
+                .contents()
+                .cast::<Uniforms>()
+                .write(uniforms);
+        }
     }
 
     pub fn render(&self) {
@@ -148,9 +212,9 @@ impl MetalCtx {
             attachment.setTexture(Some(&drawable.texture()));
             attachment.setLoadAction(MTLLoadAction::Clear);
             attachment.setClearColor(MTLClearColor {
-                red: 0.1,
-                blue: 0.2,
-                green: 0.3,
+                red: 0.07,
+                blue: 0.1,
+                green: 0.08,
                 alpha: 1.0,
             });
             attachment.setStoreAction(MTLStoreAction::Store);
@@ -168,6 +232,9 @@ impl MetalCtx {
             encoder.setVertexBuffer_offset_atIndex(Some(&self.instance_buffer), 0, 1);
             encoder.setVertexBuffer_offset_atIndex(Some(&self.color_buffer), 0, 2);
             encoder.setVertexBuffer_offset_atIndex(Some(&self.uniform_buffer), 0, 3);
+
+            encoder.setFragmentTexture_atIndex(Some(&self.texture), 0);
+            encoder.setFragmentSamplerState_atIndex(Some(&self.sampler), 0);
 
             encoder.drawPrimitives_vertexStart_vertexCount_instanceCount(
                 MTLPrimitiveType::Triangle,
