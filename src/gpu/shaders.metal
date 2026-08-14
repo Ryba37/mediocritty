@@ -18,7 +18,11 @@ vertex VsOut vs_main(uint vid [[vertex_id]],
                      constant float4* colors [[buffer(2)]],
                      constant Uniforms& u [[buffer(3)]]) {
     VsOut out;
-    out.position = float4(positions[vid] + offsets[iid], 0.0, 1.0);
+
+    float2 px = (offsets[iid] + positions[vid]) * u.cell;
+    float2 ndc = px / u.screen * 2 - 1;
+    out.position = float4(ndc.x, -ndc.y, 0.0, 1.0);
+
     out.color = colors[iid];
     return out;
 }
