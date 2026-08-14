@@ -1,23 +1,27 @@
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use objc2_app_kit::NSView;
 use objc2_core_foundation::CGSize;
-use objc2_metal::MTLCommandBuffer;
-use objc2_metal::MTLCommandEncoder;
-use objc2_metal::MTLDrawable;
-use objc2_metal::{MTLClearColor, MTLLoadAction, MTLStoreAction};
-use objc2_metal::{MTLCommandQueue, MTLDevice, MTLPixelFormat, MTLRenderPassDescriptor};
-use objc2_quartz_core::CAMetalDrawable;
-use objc2_quartz_core::CAMetalLayer;
-use winit::raw_window_handle::HasWindowHandle;
-use winit::{raw_window_handle::RawWindowHandle, window::Window};
+use objc2_foundation::NSString;
+use objc2_metal::{
+    MTLClearColor, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDevice, MTLDrawable,
+    MTLLibrary, MTLLoadAction, MTLPixelFormat, MTLPrimitiveType, MTLRenderCommandEncoder,
+    MTLRenderPassDescriptor, MTLRenderPipelineDescriptor, MTLRenderPipelineState, MTLStoreAction,
+};
+use objc2_quartz_core::{CAMetalDrawable, CAMetalLayer};
+use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+use winit::window::Window;
 
 type Device = Retained<ProtocolObject<dyn MTLDevice>>;
 type Queue = Retained<ProtocolObject<dyn MTLCommandQueue>>;
+type Pipeline = Retained<ProtocolObject<dyn MTLRenderPipelineState>>;
+
+const PIXEL_FORMAT: MTLPixelFormat = MTLPixelFormat::BGRA8Unorm_sRGB;
 
 pub struct MetalCtx {
     device: Device,
     queue: Queue,
     layer: Retained<CAMetalLayer>,
+    pipeline: Pipeline,
 }
 
 impl MetalCtx {
@@ -31,7 +35,7 @@ impl MetalCtx {
 
         let layer = CAMetalLayer::new();
         layer.setDevice(Some(&device));
-        layer.setPixelFormat(MTLPixelFormat::BGRA8Unorm_sRGB);
+        layer.setPixelFormat(PIXEL_FORMAT);
         layer.setPresentsWithTransaction(true);
 
         let view = Self::view_of(window);
@@ -42,10 +46,38 @@ impl MetalCtx {
         let size = window.inner_size();
         layer.setDrawableSize(CGSize::new(size.width as f64, size.height as f64));
 
+        let source = NSString::from_str(include_str!("shaders.metal"));
+        let library = device
+            .newLibraryWithSource_options_error(&source, None)
+            .map_err(|e| format!("shader compile: {e}"))?;
+
+        let vs = library
+            .newFunctionWithName(&NSString::from_str("vs_main"))
+            .ok_or_else(|| "vs_main not found".to_string())?;
+
+        let fs = library
+            .newFunctionWithName(&NSString::from_str("fs_main"))
+            .ok_or_else(|| "vf_main not found".to_string())?;
+
+        let desc = MTLRenderPipelineDescriptor::new();
+        desc.setVertexFunction(Some(&vs));
+        desc.setFragmentFunction(Some(&fs));
+
+        unsafe {
+            desc.colorAttachments()
+                .objectAtIndexedSubscript(0)
+                .setPixelFormat(PIXEL_FORMAT);
+        }
+
+        let pipeline = device
+            .newRenderPipelineStateWithDescriptor_error(&desc)
+            .map_err(|e| format!("pipeline: {e}"))?;
+
         Ok(Self {
             device,
             queue,
             layer,
+            pipeline,
         })
     }
 
@@ -80,6 +112,10 @@ impl MetalCtx {
             let Some(encoder) = cmd.renderCommandEncoderWithDescriptor(&descriptor) else {
                 return;
             };
+
+            encoder.setRenderPipelineState(&self.pipeline);
+            encoder.drawPrimitives_vertexStart_vertexCount(MTLPrimitiveType::Triangle, 0, 3);
+
             encoder.endEncoding();
             cmd.commit();
             cmd.waitUntilScheduled();
