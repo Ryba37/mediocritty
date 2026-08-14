@@ -9,10 +9,10 @@ use objc2_metal::{
     MTLDrawable, MTLLibrary, MTLLoadAction, MTLOrigin, MTLPixelFormat, MTLPrimitiveType, MTLRegion,
     MTLRenderCommandEncoder, MTLRenderPassDescriptor, MTLRenderPipelineDescriptor,
     MTLRenderPipelineState, MTLResourceOptions, MTLSamplerDescriptor, MTLSamplerMinMagFilter,
-    MTLSize, MTLStoreAction, MTLTextureDescriptor,
+    MTLSamplerState, MTLSize, MTLStoreAction, MTLTexture, MTLTextureDescriptor,
 };
-use objc2_metal::{MTLSamplerState, MTLTexture};
 use objc2_quartz_core::{CAMetalDrawable, CAMetalLayer};
+use winit::dpi::PhysicalSize;
 use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use winit::window::Window;
 
@@ -25,6 +25,23 @@ type Sampler = Retained<ProtocolObject<dyn MTLSamplerState>>;
 
 const PIXEL_FORMAT: MTLPixelFormat = MTLPixelFormat::BGRA8Unorm_sRGB;
 const CELL: [f32; 2] = [20.0, 40.0];
+
+const QUAD_POSITIONS: [[f32; 2]; 6] = [
+    [0.0, 0.0],
+    [1.0, 0.0],
+    [1.0, 1.0],
+    [0.0, 0.0],
+    [1.0, 1.0],
+    [0.0, 1.0],
+];
+
+const INSTANCE_OFFSETS: [[f32; 2]; 3] = [[0.0, 0.0], [1.0, 0.0], [2.0, 0.0]];
+
+const INSTANCE_COLORS: [[f32; 4]; 3] = [
+    [1.0, 0.3, 0.3, 1.0],
+    [0.3, 1.0, 0.3, 1.0],
+    [0.3, 0.3, 1.0, 1.0],
+];
 
 pub struct MetalCtx {
     device: Device,
@@ -56,8 +73,47 @@ impl MetalCtx {
             .newCommandQueue()
             .ok_or_else(|| "couldn't create queue".to_string())?;
 
+        let size = window.inner_size();
+        let layer = Self::create_layer(&device, window, size);
+        let pipeline = Self::create_pipeline(&device)?;
+
+        let vertex_buffer = Self::make_buffer(&device, &QUAD_POSITIONS)?;
+        let instance_buffer = Self::make_buffer(&device, &INSTANCE_OFFSETS)?;
+        let color_buffer = Self::make_buffer(&device, &INSTANCE_COLORS)?;
+        let uniform_buffer = Self::make_buffer(
+            &device,
+            &[Uniforms {
+                cell: CELL,
+                screen: [size.width as f32, size.height as f32],
+            }],
+        )?;
+
+        let texture = Self::create_texture(&device)?;
+        let sampler = Self::create_sampler(&device)?;
+
+        Ok(Self {
+            device,
+            queue,
+            layer,
+            pipeline,
+            vertex_buffer,
+            vertex_count: QUAD_POSITIONS.len(),
+            instance_buffer,
+            instance_count: INSTANCE_OFFSETS.len(),
+            color_buffer,
+            uniform_buffer,
+            texture,
+            sampler,
+        })
+    }
+
+    fn create_layer(
+        device: &Device,
+        window: &Window,
+        size: PhysicalSize<u32>,
+    ) -> Retained<CAMetalLayer> {
         let layer = CAMetalLayer::new();
-        layer.setDevice(Some(&device));
+        layer.setDevice(Some(device));
         layer.setPixelFormat(PIXEL_FORMAT);
         layer.setPresentsWithTransaction(true);
 
@@ -66,9 +122,12 @@ impl MetalCtx {
         view.setWantsLayer(true);
 
         layer.setContentsScale(window.scale_factor());
-        let size = window.inner_size();
         layer.setDrawableSize(CGSize::new(size.width as f64, size.height as f64));
 
+        layer
+    }
+
+    fn create_pipeline(device: &Device) -> Result<Pipeline, String> {
         let source = NSString::from_str(include_str!("shaders.metal"));
         let library = device
             .newLibraryWithSource_options_error(&source, None)
@@ -80,7 +139,7 @@ impl MetalCtx {
 
         let fs = library
             .newFunctionWithName(&NSString::from_str("fs_main"))
-            .ok_or_else(|| "vf_main not found".to_string())?;
+            .ok_or_else(|| "fs_main not found".to_string())?;
 
         let desc = MTLRenderPipelineDescriptor::new();
         desc.setVertexFunction(Some(&vs));
@@ -92,38 +151,13 @@ impl MetalCtx {
                 .setPixelFormat(PIXEL_FORMAT);
         }
 
-        let pipeline = device
+        device
             .newRenderPipelineStateWithDescriptor_error(&desc)
-            .map_err(|e| format!("pipeline: {e}"))?;
+            .map_err(|e| format!("pipeline: {e}"))
+    }
 
-        let positions: [[f32; 2]; 6] = [
-            [0.0, 0.0],
-            [1.0, 0.0],
-            [1.0, 1.0],
-            [0.0, 0.0],
-            [1.0, 1.0],
-            [0.0, 1.0],
-        ];
-
-        let offsets: [[f32; 2]; 3] = [[0.0, 0.0], [1.0, 0.0], [2.0, 0.0]];
-
-        let colors: [[f32; 4]; 3] = [
-            [1.0, 0.3, 0.3, 1.0],
-            [0.3, 1.0, 0.3, 1.0],
-            [0.3, 0.3, 1.0, 1.0],
-        ];
-
-        let uniforms = Uniforms {
-            cell: CELL,
-            screen: [size.width as f32, size.height as f32],
-        };
-
-        let vertex_buffer = Self::make_buffer(&device, &positions)?;
-        let instance_buffer = Self::make_buffer(&device, &offsets)?;
-        let color_buffer = Self::make_buffer(&device, &colors)?;
-        let uniform_buffer = Self::make_buffer(&device, &[uniforms])?;
-
-        let text_desc = unsafe {
+    fn create_texture(device: &Device) -> Result<Texture, String> {
+        let desc = unsafe {
             MTLTextureDescriptor::texture2DDescriptorWithPixelFormat_width_height_mipmapped(
                 MTLPixelFormat::RGBA8Unorm,
                 2,
@@ -133,7 +167,7 @@ impl MetalCtx {
         };
 
         let texture = device
-            .newTextureWithDescriptor(&text_desc)
+            .newTextureWithDescriptor(&desc)
             .ok_or_else(|| "couldn't create texture".to_string())?;
 
         let pixels: [u8; 16] = [
@@ -158,28 +192,17 @@ impl MetalCtx {
             );
         }
 
-        let sampler_desc = MTLSamplerDescriptor::new();
-        sampler_desc.setMinFilter(MTLSamplerMinMagFilter::Nearest);
-        sampler_desc.setMagFilter(MTLSamplerMinMagFilter::Nearest);
+        Ok(texture)
+    }
 
-        let sampler = device
-            .newSamplerStateWithDescriptor(&sampler_desc)
-            .ok_or_else(|| "couldn't create sampler".to_string())?;
+    fn create_sampler(device: &Device) -> Result<Sampler, String> {
+        let desc = MTLSamplerDescriptor::new();
+        desc.setMinFilter(MTLSamplerMinMagFilter::Nearest);
+        desc.setMagFilter(MTLSamplerMinMagFilter::Nearest);
 
-        Ok(Self {
-            device,
-            queue,
-            layer,
-            pipeline,
-            vertex_buffer,
-            vertex_count: positions.len(),
-            instance_buffer,
-            instance_count: offsets.len(),
-            color_buffer,
-            uniform_buffer,
-            texture,
-            sampler,
-        })
+        device
+            .newSamplerStateWithDescriptor(&desc)
+            .ok_or_else(|| "couldn't create sampler".to_string())
     }
 
     pub fn resize(&self, width: u32, height: u32, scale_factor: f64) {
@@ -213,8 +236,8 @@ impl MetalCtx {
             attachment.setLoadAction(MTLLoadAction::Clear);
             attachment.setClearColor(MTLClearColor {
                 red: 0.07,
-                blue: 0.1,
                 green: 0.08,
+                blue: 0.1,
                 alpha: 1.0,
             });
             attachment.setStoreAction(MTLStoreAction::Store);
