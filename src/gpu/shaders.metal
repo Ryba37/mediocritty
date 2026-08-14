@@ -1,14 +1,11 @@
 #include <metal_stdlib>
 using namespace metal;
 
-constant float2 positions[] = {
-    float2( 0.0,  0.5),
-    float2(-0.5, -0.5),
-    float2( 0.5, -0.5),
-};
-
-vertex float4 vs_main(uint vid [[vertex_id]]) {
-    return float4(positions[vid], 0.0, 1.0);
+vertex float4 vs_main(uint vid [[vertex_id]],
+                      uint iid [[instance_id]],
+                      constant float2* positions [[buffer(0)]],
+                      constant float2* offsets [[buffer(1)]]) {
+    return float4(positions[vid] + offsets[iid], 0.0, 1.0);
 }
 
 fragment float4 fs_main() {

@@ -1,11 +1,14 @@
+use std::ptr::NonNull;
+
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use objc2_app_kit::NSView;
 use objc2_core_foundation::CGSize;
 use objc2_foundation::NSString;
 use objc2_metal::{
-    MTLClearColor, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDevice, MTLDrawable,
-    MTLLibrary, MTLLoadAction, MTLPixelFormat, MTLPrimitiveType, MTLRenderCommandEncoder,
-    MTLRenderPassDescriptor, MTLRenderPipelineDescriptor, MTLRenderPipelineState, MTLStoreAction,
+    MTLBuffer, MTLClearColor, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDevice,
+    MTLDrawable, MTLLibrary, MTLLoadAction, MTLPixelFormat, MTLPrimitiveType,
+    MTLRenderCommandEncoder, MTLRenderPassDescriptor, MTLRenderPipelineDescriptor,
+    MTLRenderPipelineState, MTLResourceOptions, MTLStoreAction,
 };
 use objc2_quartz_core::{CAMetalDrawable, CAMetalLayer};
 use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -14,6 +17,7 @@ use winit::window::Window;
 type Device = Retained<ProtocolObject<dyn MTLDevice>>;
 type Queue = Retained<ProtocolObject<dyn MTLCommandQueue>>;
 type Pipeline = Retained<ProtocolObject<dyn MTLRenderPipelineState>>;
+type Buffer = Retained<ProtocolObject<dyn MTLBuffer>>;
 
 const PIXEL_FORMAT: MTLPixelFormat = MTLPixelFormat::BGRA8Unorm_sRGB;
 
@@ -22,6 +26,10 @@ pub struct MetalCtx {
     queue: Queue,
     layer: Retained<CAMetalLayer>,
     pipeline: Pipeline,
+    vertex_buffer: Buffer,
+    vertex_count: usize,
+    instance_buffer: Buffer,
+    instance_count: usize,
 }
 
 impl MetalCtx {
@@ -73,11 +81,37 @@ impl MetalCtx {
             .newRenderPipelineStateWithDescriptor_error(&desc)
             .map_err(|e| format!("pipeline: {e}"))?;
 
+        let positions: [[f32; 2]; 3] = [[0.0, 0.5], [-0.5, -0.5], [0.5, -0.5]];
+
+        let vertex_buffer = unsafe {
+            device.newBufferWithBytes_length_options(
+                NonNull::from(&positions).cast(),
+                size_of_val(&positions),
+                MTLResourceOptions::StorageModeShared,
+            )
+        }
+        .ok_or_else(|| "couldn't create vertex buffer".to_string())?;
+
+        let offsets: [[f32; 2]; 3] = [[-0.6, 0.0], [0.0, 0.0], [0.6, 0.0]];
+
+        let instance_buffer = unsafe {
+            device.newBufferWithBytes_length_options(
+                NonNull::from(&offsets).cast(),
+                size_of_val(&offsets),
+                MTLResourceOptions::StorageModeShared,
+            )
+        }
+        .ok_or_else(|| "couldn't create instance buffer".to_string())?;
+
         Ok(Self {
             device,
             queue,
             layer,
             pipeline,
+            vertex_buffer,
+            vertex_count: positions.len(),
+            instance_buffer,
+            instance_count: offsets.len(),
         })
     }
 
@@ -114,7 +148,15 @@ impl MetalCtx {
             };
 
             encoder.setRenderPipelineState(&self.pipeline);
-            encoder.drawPrimitives_vertexStart_vertexCount(MTLPrimitiveType::Triangle, 0, 3);
+
+            encoder.setVertexBuffer_offset_atIndex(Some(&self.vertex_buffer), 0, 0);
+            encoder.setVertexBuffer_offset_atIndex(Some(&self.instance_buffer), 0, 1);
+            encoder.drawPrimitives_vertexStart_vertexCount_instanceCount(
+                MTLPrimitiveType::Triangle,
+                0,
+                self.vertex_count,
+                self.instance_count,
+            );
 
             encoder.endEncoding();
             cmd.commit();
