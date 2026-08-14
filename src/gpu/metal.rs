@@ -31,6 +31,13 @@ pub struct MetalCtx {
     instance_buffer: Buffer,
     instance_count: usize,
     color_buffer: Buffer,
+    uniform_buffer: Buffer,
+}
+
+#[repr(C)]
+struct Uniforms {
+    cell: [f32; 2],
+    screen: [f32; 2],
 }
 
 impl MetalCtx {
@@ -99,9 +106,15 @@ impl MetalCtx {
             [0.3, 0.3, 1.0, 1.0],
         ];
 
+        let uniforms = Uniforms {
+            cell: [20.0, 40.0],
+            screen: [size.width as f32, size.height as f32],
+        };
+
         let vertex_buffer = Self::make_buffer(&device, &positions)?;
         let instance_buffer = Self::make_buffer(&device, &offsets)?;
         let color_buffer = Self::make_buffer(&device, &colors)?;
+        let uniform_buffer = Self::make_buffer(&device, &[uniforms])?;
 
         Ok(Self {
             device,
@@ -113,6 +126,7 @@ impl MetalCtx {
             instance_buffer,
             instance_count: offsets.len(),
             color_buffer,
+            uniform_buffer,
         })
     }
 
@@ -153,6 +167,7 @@ impl MetalCtx {
             encoder.setVertexBuffer_offset_atIndex(Some(&self.vertex_buffer), 0, 0);
             encoder.setVertexBuffer_offset_atIndex(Some(&self.instance_buffer), 0, 1);
             encoder.setVertexBuffer_offset_atIndex(Some(&self.color_buffer), 0, 2);
+            encoder.setVertexBuffer_offset_atIndex(Some(&self.uniform_buffer), 0, 3);
 
             encoder.drawPrimitives_vertexStart_vertexCount_instanceCount(
                 MTLPrimitiveType::Triangle,
