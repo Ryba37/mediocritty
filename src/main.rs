@@ -1,8 +1,10 @@
 use winit::event_loop::{ControlFlow, EventLoop};
 
 mod app;
+mod color;
 mod font;
 mod gpu;
+mod layout;
 
 fn main() {
     let event_loop = EventLoop::new().expect("failed to create loop");

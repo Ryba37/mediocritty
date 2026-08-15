@@ -5,6 +5,7 @@ use winit::window::{Window, WindowId};
 
 use crate::font::{Font, FontCache};
 use crate::gpu;
+use crate::layout::Layout;
 
 const FONT_SIZE: f64 = 15.0;
 
@@ -13,6 +14,7 @@ pub struct App {
     window: Option<Window>,
     renderer: Option<gpu::Renderer>,
     cache: Option<FontCache>,
+    layout: Option<Layout>,
 }
 
 impl ApplicationHandler for App {
@@ -45,7 +47,7 @@ impl ApplicationHandler for App {
             }
         };
 
-        let mut renderer = match gpu::Renderer::new(&window, metrics, cache.atlas()) {
+        let renderer = match gpu::Renderer::new(&window, metrics, cache.atlas()) {
             Ok(r) => r,
             Err(e) => {
                 eprintln!("{e}");
@@ -54,28 +56,12 @@ impl ApplicationHandler for App {
             }
         };
 
-        let text = "mediocritty lol";
-        let mut offsets = Vec::new();
-        let mut colors = Vec::new();
-        let mut cells = Vec::new();
-
-        for (i, ch) in text.chars().enumerate() {
-            offsets.push([i as f32, 0.0]);
-            colors.push([0.9, 0.9, 0.85, 1.0]);
-            cells.push(cache.get_or_insert(ch));
-        }
-
-        if let Err(e) = renderer.upload_instances(&offsets, &colors, &cells) {
-            eprintln!("{e}");
-            event_loop.exit();
-            return;
-        }
-
-        renderer.sync_atlas(cache.atlas_mut());
+        let mut layout = Layout::new();
 
         self.window = Some(window);
         self.renderer = Some(renderer);
         self.cache = Some(cache);
+        self.layout = Some(layout);
 
         self.window.as_ref().unwrap().request_redraw();
     }
@@ -91,7 +77,12 @@ impl ApplicationHandler for App {
             return;
         }
 
-        let (Some(window), Some(renderer)) = (&self.window, &mut self.renderer) else {
+        let (Some(window), Some(renderer), Some(cache), Some(layout)) = (
+            &self.window,
+            &mut self.renderer,
+            &mut self.cache,
+            &mut self.layout,
+        ) else {
             return;
         };
 
@@ -101,11 +92,13 @@ impl ApplicationHandler for App {
 
         match event {
             WindowEvent::RedrawRequested => {
-                renderer.render();
+                let frame = layout.build("mediocritty lol", cache);
+                renderer.render(&frame, cache.atlas_mut());
             }
             WindowEvent::Resized(size) => {
                 renderer.resize(size.width, size.height, window.scale_factor());
-                renderer.render();
+                let frame = layout.build("mediocritty lol", cache);
+                renderer.render(&frame, cache.atlas_mut());
             }
             // todo: пересоздавать шрифт при ScaleFactorChanged
             _ => (),

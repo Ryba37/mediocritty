@@ -7,8 +7,9 @@ use objc2_quartz_core::CAMetalDrawable;
 use winit::window::Window;
 
 use crate::{
+    color::srgb_to_linear,
     font::{Atlas, Metrics},
-    gpu::metal::color::srgb_to_linear,
+    layout::Frame,
 };
 
 use atlas_texture::AtlasTexture;
@@ -18,7 +19,6 @@ use types::Pipeline;
 
 mod atlas_texture;
 mod buffers;
-mod color;
 mod context;
 mod pipeline;
 mod types;
@@ -62,14 +62,14 @@ impl MetalCtx {
         self.buffers.set_screen([width as f32, height as f32]);
     }
 
-    pub fn sync_atlas(&mut self, atlas: &mut Atlas) {
+    fn sync_atlas(&mut self, atlas: &mut Atlas) {
         if self.atlas_texture.sync(self.context.device(), atlas) {
             self.buffers
                 .set_atlas([atlas.stride() as f32, atlas.height() as f32]);
         }
     }
 
-    pub fn upload_instances(
+    fn upload_instances(
         &mut self,
         offsets: &[[f32; 2]],
         colors: &[[f32; 4]],
@@ -79,7 +79,13 @@ impl MetalCtx {
             .upload_instances(self.context.device(), offsets, colors, cells)
     }
 
-    pub fn render(&mut self) {
+    pub fn render(&mut self, frame: &Frame, atlas: &mut Atlas) {
+        self.sync_atlas(atlas);
+        if let Err(e) = self.upload_instances(frame.offsets, frame.colors, frame.cells) {
+            eprintln!("{e}");
+            return;
+        }
+
         let Some(drawable) = self.context.layer().nextDrawable() else {
             return;
         };
