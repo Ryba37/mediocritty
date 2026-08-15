@@ -1,6 +1,7 @@
 use winit::event_loop::EventLoop;
 
 mod app;
+mod font;
 mod gpu;
 
 fn main() {

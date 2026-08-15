@@ -5,6 +5,7 @@ edition = "2024"
 license = "Apache-2.0"
 
 [dependencies]
+objc2-core-text = "0.3.2"
 winit = "0.30.13"
 
 [target.'cfg(target_os = "macos")'.dependencies]
