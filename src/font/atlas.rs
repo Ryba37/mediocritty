@@ -60,8 +60,9 @@ impl Atlas {
             self.grow();
         }
         let n = self.next;
-        let x = ((n % self.cols) * self.cell_width) as usize;
-        let y = ((n / self.cols) * self.cell_height) as usize;
+        let (x, y, _, _) = self.cell_rect(n);
+        let x = x as usize;
+        let y = y as usize;
         let stride = self.stride() as usize;
         self.data
             .chunks_exact_mut(stride)
@@ -105,5 +106,12 @@ impl Atlas {
     pub fn alias(&mut self, ch: char, cell: u32) {
         debug_assert!(cell < self.next);
         self.map.insert(ch, cell);
+    }
+
+    pub fn cell_rect(&self, n: u32) -> (u32, u32, u32, u32) {
+        let x = (n % self.cols) * self.cell_width;
+        let y = (n / self.cols) * self.cell_height;
+
+        (x, y, self.cell_width, self.cell_height)
     }
 }

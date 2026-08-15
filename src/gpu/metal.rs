@@ -5,9 +5,9 @@ use objc2_app_kit::NSView;
 use objc2_core_foundation::CGSize;
 use objc2_foundation::NSString;
 use objc2_metal::{
-    MTLBuffer, MTLClearColor, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDevice,
-    MTLDrawable, MTLLibrary, MTLLoadAction, MTLOrigin, MTLPixelFormat, MTLPrimitiveType, MTLRegion,
-    MTLRenderCommandEncoder, MTLRenderPassDescriptor, MTLRenderPipelineDescriptor,
+    MTLBlendFactor, MTLBuffer, MTLClearColor, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue,
+    MTLDevice, MTLDrawable, MTLLibrary, MTLLoadAction, MTLOrigin, MTLPixelFormat, MTLPrimitiveType,
+    MTLRegion, MTLRenderCommandEncoder, MTLRenderPassDescriptor, MTLRenderPipelineDescriptor,
     MTLRenderPipelineState, MTLResourceOptions, MTLSamplerDescriptor, MTLSamplerMinMagFilter,
     MTLSamplerState, MTLSize, MTLStoreAction, MTLTexture, MTLTextureDescriptor,
 };
@@ -16,7 +16,7 @@ use winit::dpi::PhysicalSize;
 use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use winit::window::Window;
 
-use crate::font::Metrics;
+use crate::font::{Atlas, Metrics};
 
 type Device = Retained<ProtocolObject<dyn MTLDevice>>;
 type Queue = Retained<ProtocolObject<dyn MTLCommandQueue>>;
@@ -57,17 +57,22 @@ pub struct MetalCtx {
     uniform_buffer: Buffer,
     texture: Texture,
     sampler: Sampler,
-    metrics: Metrics,
+    uniforms: Uniforms,
+    cell_buffer: Buffer,
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 struct Uniforms {
     cell: [f32; 2],
     screen: [f32; 2],
+    atlas: [f32; 2],
+    cols: u32,
+    pad: u32,
 }
 
 impl MetalCtx {
-    pub fn new(window: &Window, metrics: Metrics) -> Result<Self, String> {
+    pub fn new(window: &Window, metrics: Metrics, atlas: &Atlas) -> Result<Self, String> {
         let device = objc2_metal::MTLCreateSystemDefaultDevice()
             .ok_or_else(|| "metal device not found".to_string())?;
 
@@ -82,15 +87,19 @@ impl MetalCtx {
         let vertex_buffer = Self::make_buffer(&device, &QUAD_POSITIONS)?;
         let instance_buffer = Self::make_buffer(&device, &INSTANCE_OFFSETS)?;
         let color_buffer = Self::make_buffer(&device, &INSTANCE_COLORS)?;
-        let uniform_buffer = Self::make_buffer(
-            &device,
-            &[Uniforms {
-                cell: [metrics.cell_width, metrics.cell_height],
-                screen: [size.width as f32, size.height as f32],
-            }],
-        )?;
 
-        let texture = Self::create_texture(&device)?;
+        let uniforms = Uniforms {
+            cell: [metrics.cell_width as f32, metrics.cell_height as f32],
+            screen: [size.width as f32, size.height as f32],
+            atlas: [atlas.stride() as f32, atlas.height() as f32],
+            cols: atlas.cols(),
+            pad: 0,
+        };
+
+        let uniform_buffer = Self::make_buffer(&device, &[uniforms])?;
+        let cell_buffer = Self::make_buffer(&device, &[0u32])?;
+
+        let texture = Self::create_texture(&device, atlas)?;
         let sampler = Self::create_sampler(&device)?;
 
         Ok(Self {
@@ -106,7 +115,8 @@ impl MetalCtx {
             uniform_buffer,
             texture,
             sampler,
-            metrics,
+            uniforms,
+            cell_buffer,
         })
     }
 
@@ -152,6 +162,14 @@ impl MetalCtx {
             desc.colorAttachments()
                 .objectAtIndexedSubscript(0)
                 .setPixelFormat(PIXEL_FORMAT);
+
+            let attachment = desc.colorAttachments().objectAtIndexedSubscript(0);
+            attachment.setPixelFormat(PIXEL_FORMAT);
+            attachment.setBlendingEnabled(true);
+            attachment.setSourceRGBBlendFactor(MTLBlendFactor::SourceAlpha);
+            attachment.setDestinationRGBBlendFactor(MTLBlendFactor::OneMinusSourceAlpha);
+            attachment.setSourceAlphaBlendFactor(MTLBlendFactor::SourceAlpha);
+            attachment.setDestinationAlphaBlendFactor(MTLBlendFactor::OneMinusSourceAlpha);
         }
 
         device
@@ -159,12 +177,12 @@ impl MetalCtx {
             .map_err(|e| format!("pipeline: {e}"))
     }
 
-    fn create_texture(device: &Device) -> Result<Texture, String> {
+    fn create_texture(device: &Device, atlas: &Atlas) -> Result<Texture, String> {
         let desc = unsafe {
             MTLTextureDescriptor::texture2DDescriptorWithPixelFormat_width_height_mipmapped(
-                MTLPixelFormat::RGBA8Unorm,
-                2,
-                2,
+                MTLPixelFormat::R8Unorm,
+                atlas.stride() as usize,
+                atlas.height() as usize,
                 false,
             )
         };
@@ -173,29 +191,102 @@ impl MetalCtx {
             .newTextureWithDescriptor(&desc)
             .ok_or_else(|| "couldn't create texture".to_string())?;
 
-        let pixels: [u8; 16] = [
-            255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255,
-        ];
+        Ok(texture)
+    }
+
+    fn upload(&self, atlas: &Atlas, dirty: &[u32]) {
+        let stride = atlas.stride() as usize;
+        let data = atlas.data();
+
+        debug_assert_eq!(data.len(), stride * atlas.height() as usize);
+
+        for &n in dirty {
+            let (x, y, w, h) = atlas.cell_rect(n);
+            let region = MTLRegion {
+                origin: MTLOrigin {
+                    x: x as usize,
+                    y: y as usize,
+                    z: 0,
+                },
+                size: MTLSize {
+                    width: w as usize,
+                    height: h as usize,
+                    depth: 1,
+                },
+            };
+
+            let offset = y as usize * stride + x as usize;
+            let ptr = NonNull::from(&data[offset]).cast();
+
+            unsafe {
+                self.texture
+                    .replaceRegion_mipmapLevel_withBytes_bytesPerRow(region, 0, ptr, stride);
+            }
+        }
+    }
+
+    pub fn sync_atlas(&mut self, atlas: &mut Atlas) {
+        if atlas.take_resized() {
+            self.texture = match Self::create_texture(&self.device, atlas) {
+                Ok(t) => t,
+                Err(e) => {
+                    eprintln!("atlas texture: {e}");
+                    return;
+                }
+            };
+            self.upload_all(atlas);
+            self.uniforms.atlas = [atlas.stride() as f32, atlas.height() as f32];
+            self.write_uniforms();
+
+            atlas.take_dirty();
+            return;
+        }
+
+        let dirty = atlas.take_dirty();
+        if !dirty.is_empty() {
+            self.upload(atlas, &dirty);
+        }
+    }
+
+    fn upload_all(&self, atlas: &Atlas) {
+        let stride = atlas.stride() as usize;
+        let data = atlas.data();
 
         let region = MTLRegion {
             origin: MTLOrigin { x: 0, y: 0, z: 0 },
             size: MTLSize {
-                width: 2,
-                height: 2,
+                width: stride,
+                height: atlas.height() as usize,
                 depth: 1,
             },
         };
 
         unsafe {
-            texture.replaceRegion_mipmapLevel_withBytes_bytesPerRow(
-                region,
-                0,
-                NonNull::from(&pixels).cast(),
-                8,
-            );
+            self.texture
+                .replaceRegion_mipmapLevel_withBytes_bytesPerRow(
+                    region,
+                    0,
+                    NonNull::from(data).cast(),
+                    stride,
+                );
         }
+    }
 
-        Ok(texture)
+    pub fn upload_instances(
+        &mut self,
+        offsets: &[[f32; 2]],
+        colors: &[[f32; 4]],
+        cells: &[u32],
+    ) -> Result<(), String> {
+        debug_assert_eq!(offsets.len(), colors.len());
+        debug_assert_eq!(offsets.len(), cells.len());
+
+        self.instance_buffer = Self::make_buffer(&self.device, offsets)?;
+        self.color_buffer = Self::make_buffer(&self.device, colors)?;
+        self.cell_buffer = Self::make_buffer(&self.device, cells)?;
+        self.instance_count = offsets.len();
+
+        Ok(())
     }
 
     fn create_sampler(device: &Device) -> Result<Sampler, String> {
@@ -208,25 +299,25 @@ impl MetalCtx {
             .ok_or_else(|| "couldn't create sampler".to_string())
     }
 
-    pub fn resize(&self, width: u32, height: u32, scale_factor: f64) {
-        self.layer.setContentsScale(scale_factor);
-        self.layer
-            .setDrawableSize(CGSize::new(width as f64, height as f64));
-
-        let uniforms = Uniforms {
-            cell: [self.metrics.cell_width, self.metrics.cell_height],
-            screen: [width as f32, height as f32],
-        };
-
+    fn write_uniforms(&self) {
         unsafe {
             self.uniform_buffer
                 .contents()
                 .cast::<Uniforms>()
-                .write(uniforms);
+                .write(self.uniforms);
         }
     }
 
-    pub fn render(&self) {
+    pub fn resize(&mut self, width: u32, height: u32, scale_factor: f64) {
+        self.layer.setContentsScale(scale_factor);
+        self.layer
+            .setDrawableSize(CGSize::new(width as f64, height as f64));
+
+        self.uniforms.screen = [width as f32, height as f32];
+        self.write_uniforms();
+    }
+
+    pub fn render(&mut self) {
         let Some(drawable) = self.layer.nextDrawable() else {
             return;
         };
@@ -258,6 +349,7 @@ impl MetalCtx {
             encoder.setVertexBuffer_offset_atIndex(Some(&self.instance_buffer), 0, 1);
             encoder.setVertexBuffer_offset_atIndex(Some(&self.color_buffer), 0, 2);
             encoder.setVertexBuffer_offset_atIndex(Some(&self.uniform_buffer), 0, 3);
+            encoder.setVertexBuffer_offset_atIndex(Some(&self.cell_buffer), 0, 4);
 
             encoder.setFragmentTexture_atIndex(Some(&self.texture), 0);
             encoder.setFragmentSamplerState_atIndex(Some(&self.sampler), 0);

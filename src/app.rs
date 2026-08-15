@@ -3,7 +3,7 @@ use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowId};
 
-use crate::font::Font;
+use crate::font::{Font, FontCache};
 use crate::gpu;
 
 const FONT_SIZE: f64 = 15.0;
@@ -12,7 +12,7 @@ const FONT_SIZE: f64 = 15.0;
 pub struct App {
     window: Option<Window>,
     renderer: Option<gpu::Renderer>,
-    font: Option<Font>,
+    cache: Option<FontCache>,
 }
 
 impl ApplicationHandler for App {
@@ -28,38 +28,54 @@ impl ApplicationHandler for App {
         let font = match Font::new(None, FONT_SIZE * window.scale_factor()) {
             Ok(font) => font,
             Err(e) => {
-                eprint!("{e}");
+                eprintln!("{e}");
                 event_loop.exit();
                 return;
             }
         };
 
-        let bm = font.rasterize('g').unwrap();
+        let metrics = font.metrics();
 
-        for y in 0..bm.height {
-            let row: String = (0..bm.width)
-                .map(|x| match bm.data[y * bm.width + x] {
-                    0..=63 => '*',
-                    64..=127 => '.',
-                    128..=191 => '+',
-                    _ => '#',
-                })
-                .collect();
-            println!("{row}");
-        }
+        let mut cache = match FontCache::new(font) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("{e}");
+                event_loop.exit();
+                return;
+            }
+        };
 
-        let renderer = match gpu::Renderer::new(&window, font.metrics()) {
+        let mut renderer = match gpu::Renderer::new(&window, metrics, cache.atlas()) {
             Ok(r) => r,
             Err(e) => {
-                eprint!("{e}");
+                eprintln!("{e}");
                 event_loop.exit();
                 return;
             }
         };
+
+        let text = "mediocritty lol";
+        let mut offsets = Vec::new();
+        let mut colors = Vec::new();
+        let mut cells = Vec::new();
+
+        for (i, ch) in text.chars().enumerate() {
+            offsets.push([i as f32, 0.0]);
+            colors.push([0.9, 0.9, 0.85, 1.0]);
+            cells.push(cache.get_or_insert(ch));
+        }
+
+        if let Err(e) = renderer.upload_instances(&offsets, &colors, &cells) {
+            eprintln!("{e}");
+            event_loop.exit();
+            return;
+        }
+
+        renderer.sync_atlas(cache.atlas_mut());
 
         self.window = Some(window);
         self.renderer = Some(renderer);
-        self.font = Some(font);
+        self.cache = Some(cache);
 
         self.window.as_ref().unwrap().request_redraw();
     }
@@ -75,7 +91,7 @@ impl ApplicationHandler for App {
             return;
         }
 
-        let (Some(window), Some(renderer)) = (&self.window, &self.renderer) else {
+        let (Some(window), Some(renderer)) = (&self.window, &mut self.renderer) else {
             return;
         };
 
