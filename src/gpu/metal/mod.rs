@@ -1,9 +1,3 @@
-mod atlas_texture;
-mod buffers;
-mod context;
-mod pipeline;
-mod types;
-
 use objc2_metal::{
     MTLClearColor, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDrawable,
     MTLLoadAction, MTLPrimitiveType, MTLRenderCommandEncoder, MTLRenderPassDescriptor,
@@ -12,12 +6,24 @@ use objc2_metal::{
 use objc2_quartz_core::CAMetalDrawable;
 use winit::window::Window;
 
-use crate::font::{Atlas, Metrics};
+use crate::{
+    font::{Atlas, Metrics},
+    gpu::metal::color::srgb_to_linear,
+};
 
 use atlas_texture::AtlasTexture;
 use buffers::{Buffers, Uniforms};
 use context::Context;
 use types::Pipeline;
+
+mod atlas_texture;
+mod buffers;
+mod color;
+mod context;
+mod pipeline;
+mod types;
+
+const BG: [f32; 3] = [0.07, 0.08, 0.10];
 
 pub struct MetalCtx {
     context: Context,
@@ -85,9 +91,9 @@ impl MetalCtx {
             attachment.setTexture(Some(&drawable.texture()));
             attachment.setLoadAction(MTLLoadAction::Clear);
             attachment.setClearColor(MTLClearColor {
-                red: 0.07,
-                green: 0.08,
-                blue: 0.1,
+                red: srgb_to_linear(BG[0]) as f64,
+                green: srgb_to_linear(BG[1]) as f64,
+                blue: srgb_to_linear(BG[2]) as f64,
                 alpha: 1.0,
             });
             attachment.setStoreAction(MTLStoreAction::Store);
