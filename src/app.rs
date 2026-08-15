@@ -46,12 +46,14 @@ impl ApplicationHandler for App {
         self.window = Some(window);
         self.renderer = Some(renderer);
         self.font = Some(font);
+
+        self.window.as_ref().unwrap().request_redraw();
     }
 
     fn window_event(
         &mut self,
         event_loop: &ActiveEventLoop,
-        _window_id: WindowId,
+        window_id: WindowId,
         event: WindowEvent,
     ) {
         if matches!(event, WindowEvent::CloseRequested) {
@@ -62,6 +64,10 @@ impl ApplicationHandler for App {
         let (Some(window), Some(renderer)) = (&self.window, &self.renderer) else {
             return;
         };
+
+        if window.id() != window_id {
+            return;
+        }
 
         match event {
             WindowEvent::RedrawRequested => {

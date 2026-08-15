@@ -31,16 +31,6 @@ impl Font {
         }
     }
 
-    pub fn family_name(&self) -> String {
-        unsafe {
-            self.inner
-                .family_name()
-                .as_str_unchecked()
-                .unwrap_or_default()
-                .to_string()
-        }
-    }
-
     pub fn metrics(&self) -> Metrics {
         self.metrics
     }
