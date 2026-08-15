@@ -4,12 +4,17 @@ mod coretext;
 pub use coretext::Font;
 
 mod atlas;
+mod cache;
+
 pub use atlas::Atlas;
+pub use cache::FontCache;
+
+pub type GlyphId = u16;
 
 #[derive(Clone, Copy)]
 pub struct Metrics {
-    pub cell_width: f32,
-    pub cell_height: f32,
+    pub cell_width: u32,
+    pub cell_height: u32,
     pub ascent: f32,
 }
 

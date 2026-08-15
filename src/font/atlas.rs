@@ -53,20 +53,16 @@ impl Atlas {
         self.dirty.clear();
     }
 
-    pub fn insert(&mut self, ch: char, bitmap: &Bitmap) -> u32 {
+    pub fn insert_glyph(&mut self, bitmap: &Bitmap) -> u32 {
         debug_assert!(bitmap.width <= self.cell_width as usize);
         debug_assert!(bitmap.height <= self.cell_height as usize);
-        debug_assert!(!self.map.contains_key(&ch));
-
         if self.next >= self.cols * self.rows {
             self.grow();
         }
-
         let n = self.next;
         let x = ((n % self.cols) * self.cell_width) as usize;
         let y = ((n / self.cols) * self.cell_height) as usize;
         let stride = self.stride() as usize;
-
         self.data
             .chunks_exact_mut(stride)
             .skip(y)
@@ -74,11 +70,15 @@ impl Atlas {
             .for_each(|(dst, src)| {
                 dst[x..x + bitmap.width].copy_from_slice(src);
             });
-
-        self.map.insert(ch, n);
         self.dirty.push(n);
         self.next += 1;
+        n
+    }
 
+    pub fn insert(&mut self, ch: char, bitmap: &Bitmap) -> u32 {
+        debug_assert!(!self.map.contains_key(&ch));
+        let n = self.insert_glyph(bitmap);
+        self.map.insert(ch, n);
         n
     }
 
@@ -100,5 +100,10 @@ impl Atlas {
 
     pub fn take_resized(&mut self) -> bool {
         std::mem::take(&mut self.resized)
+    }
+
+    pub fn alias(&mut self, ch: char, cell: u32) {
+        debug_assert!(cell < self.next);
+        self.map.insert(ch, cell);
     }
 }
