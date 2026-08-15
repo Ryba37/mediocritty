@@ -16,6 +16,8 @@ use winit::dpi::PhysicalSize;
 use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use winit::window::Window;
 
+use crate::font::Metrics;
+
 type Device = Retained<ProtocolObject<dyn MTLDevice>>;
 type Queue = Retained<ProtocolObject<dyn MTLCommandQueue>>;
 type Pipeline = Retained<ProtocolObject<dyn MTLRenderPipelineState>>;
@@ -24,7 +26,6 @@ type Texture = Retained<ProtocolObject<dyn MTLTexture>>;
 type Sampler = Retained<ProtocolObject<dyn MTLSamplerState>>;
 
 const PIXEL_FORMAT: MTLPixelFormat = MTLPixelFormat::BGRA8Unorm_sRGB;
-const CELL: [f32; 2] = [20.0, 40.0];
 
 const QUAD_POSITIONS: [[f32; 2]; 6] = [
     [0.0, 0.0],
@@ -56,6 +57,7 @@ pub struct MetalCtx {
     uniform_buffer: Buffer,
     texture: Texture,
     sampler: Sampler,
+    metrics: Metrics,
 }
 
 #[repr(C)]
@@ -65,7 +67,7 @@ struct Uniforms {
 }
 
 impl MetalCtx {
-    pub fn new(window: &Window) -> Result<Self, String> {
+    pub fn new(window: &Window, metrics: Metrics) -> Result<Self, String> {
         let device = objc2_metal::MTLCreateSystemDefaultDevice()
             .ok_or_else(|| "metal device not found".to_string())?;
 
@@ -83,7 +85,7 @@ impl MetalCtx {
         let uniform_buffer = Self::make_buffer(
             &device,
             &[Uniforms {
-                cell: CELL,
+                cell: [metrics.cell_width, metrics.cell_height],
                 screen: [size.width as f32, size.height as f32],
             }],
         )?;
@@ -104,6 +106,7 @@ impl MetalCtx {
             uniform_buffer,
             texture,
             sampler,
+            metrics,
         })
     }
 
@@ -211,7 +214,7 @@ impl MetalCtx {
             .setDrawableSize(CGSize::new(width as f64, height as f64));
 
         let uniforms = Uniforms {
-            cell: CELL,
+            cell: [self.metrics.cell_width, self.metrics.cell_height],
             screen: [width as f32, height as f32],
         };
 

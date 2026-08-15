@@ -3,12 +3,16 @@ use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowId};
 
+use crate::font::Font;
 use crate::gpu;
+
+const FONT_SIZE: f64 = 15.0;
 
 #[derive(Default)]
 pub struct App {
     window: Option<Window>,
     renderer: Option<gpu::Renderer>,
+    font: Option<Font>,
 }
 
 impl ApplicationHandler for App {
@@ -21,7 +25,16 @@ impl ApplicationHandler for App {
             .create_window(Window::default_attributes())
             .unwrap();
 
-        let renderer = match gpu::Renderer::new(&window) {
+        let font = match Font::new(None, FONT_SIZE * window.scale_factor()) {
+            Ok(font) => font,
+            Err(e) => {
+                eprint!("{e}");
+                event_loop.exit();
+                return;
+            }
+        };
+
+        let renderer = match gpu::Renderer::new(&window, font.metrics()) {
             Ok(r) => r,
             Err(e) => {
                 eprint!("{e}");
@@ -32,6 +45,7 @@ impl ApplicationHandler for App {
 
         self.window = Some(window);
         self.renderer = Some(renderer);
+        self.font = Some(font);
     }
 
     fn window_event(
@@ -57,6 +71,7 @@ impl ApplicationHandler for App {
                 renderer.resize(size.width, size.height, window.scale_factor());
                 renderer.render();
             }
+            // todo: пересоздавать шрифт при ScaleFactorChanged
             _ => (),
         }
     }
