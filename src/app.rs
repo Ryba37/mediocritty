@@ -38,7 +38,7 @@ impl ApplicationHandler for App {
 
         let metrics = font.metrics();
 
-        let mut cache = match FontCache::new(font) {
+        let cache = match FontCache::new(font) {
             Ok(c) => c,
             Err(e) => {
                 eprintln!("{e}");
@@ -56,7 +56,7 @@ impl ApplicationHandler for App {
             }
         };
 
-        let mut layout = Layout::new();
+        let layout = Layout::new();
 
         self.window = Some(window);
         self.renderer = Some(renderer);

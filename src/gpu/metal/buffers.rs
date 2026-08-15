@@ -3,6 +3,8 @@ use std::ptr::NonNull;
 use objc2::runtime::ProtocolObject;
 use objc2_metal::{MTLBuffer, MTLDevice, MTLRenderCommandEncoder, MTLResourceOptions};
 
+use crate::layout::GlyphInstance;
+
 use super::types::{Buffer, Device};
 
 const QUAD_POSITIONS: [[f32; 2]; 6] = [
@@ -13,6 +15,8 @@ const QUAD_POSITIONS: [[f32; 2]; 6] = [
     [1.0, 1.0],
     [0.0, 1.0],
 ];
+
+const INITIAL_CAPACITY: usize = 4096;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -27,9 +31,8 @@ pub struct Uniforms {
 pub struct Buffers {
     vertex: Buffer,
     vertex_count: usize,
-    offsets: Buffer,
-    colors: Buffer,
-    cells: Buffer,
+    instances: Buffer,
+    capacity: usize,
     instance_count: usize,
     uniform: Buffer,
     uniforms: Uniforms,
@@ -40,9 +43,8 @@ impl Buffers {
         Ok(Self {
             vertex: make_buffer(device, &QUAD_POSITIONS)?,
             vertex_count: QUAD_POSITIONS.len(),
-            offsets: make_buffer(device, &[[0.0f32, 0.0]])?,
-            colors: make_buffer(device, &[[0.0f32; 4]])?,
-            cells: make_buffer(device, &[0u32])?,
+            instances: empty_buffer::<GlyphInstance>(device, INITIAL_CAPACITY)?,
+            capacity: INITIAL_CAPACITY,
             instance_count: 0,
             uniform: make_buffer(device, &[uniforms])?,
             uniforms,
@@ -70,22 +72,24 @@ impl Buffers {
     pub fn upload_instances(
         &mut self,
         device: &Device,
-        offsets: &[[f32; 2]],
-        colors: &[[f32; 4]],
-        cells: &[u32],
+        instances: &[GlyphInstance],
     ) -> Result<(), String> {
-        debug_assert_eq!(offsets.len(), colors.len());
-        debug_assert_eq!(offsets.len(), cells.len());
+        self.instance_count = instances.len();
 
-        if offsets.is_empty() {
-            self.instance_count = 0;
+        if instances.is_empty() {
             return Ok(());
         }
 
-        self.offsets = make_buffer(device, offsets)?;
-        self.colors = make_buffer(device, colors)?;
-        self.cells = make_buffer(device, cells)?;
-        self.instance_count = offsets.len();
+        if instances.len() > self.capacity {
+            let capacity = instances.len().next_power_of_two();
+            self.instances = empty_buffer::<GlyphInstance>(device, capacity)?;
+            self.capacity = capacity;
+        }
+
+        unsafe {
+            let dst = self.instances.contents().cast::<GlyphInstance>().as_ptr();
+            std::ptr::copy_nonoverlapping(instances.as_ptr(), dst, instances.len());
+        }
 
         Ok(())
     }
@@ -93,10 +97,8 @@ impl Buffers {
     pub fn bind(&self, encoder: &ProtocolObject<dyn MTLRenderCommandEncoder>) {
         unsafe {
             encoder.setVertexBuffer_offset_atIndex(Some(&self.vertex), 0, 0);
-            encoder.setVertexBuffer_offset_atIndex(Some(&self.offsets), 0, 1);
-            encoder.setVertexBuffer_offset_atIndex(Some(&self.colors), 0, 2);
+            encoder.setVertexBuffer_offset_atIndex(Some(&self.instances), 0, 1);
             encoder.setVertexBuffer_offset_atIndex(Some(&self.uniform), 0, 3);
-            encoder.setVertexBuffer_offset_atIndex(Some(&self.cells), 0, 4);
         }
     }
 
@@ -110,7 +112,7 @@ impl Buffers {
     }
 }
 
-pub fn make_buffer<T>(device: &Device, data: &[T]) -> Result<Buffer, String> {
+fn make_buffer<T>(device: &Device, data: &[T]) -> Result<Buffer, String> {
     if data.is_empty() {
         return Err("empty buffer".to_string());
     }
@@ -123,4 +125,13 @@ pub fn make_buffer<T>(device: &Device, data: &[T]) -> Result<Buffer, String> {
         )
     }
     .ok_or_else(|| "couldn't create buffer".to_string())
+}
+
+fn empty_buffer<T>(device: &Device, capacity: usize) -> Result<Buffer, String> {
+    device
+        .newBufferWithLength_options(
+            size_of::<T>() * capacity,
+            MTLResourceOptions::StorageModeShared,
+        )
+        .ok_or_else(|| "couldn't create buffer".to_string())
 }

@@ -9,7 +9,7 @@ use winit::window::Window;
 use crate::{
     color::srgb_to_linear,
     font::{Atlas, Metrics},
-    layout::Frame,
+    layout::{Frame, GlyphInstance},
 };
 
 use atlas_texture::AtlasTexture;
@@ -69,19 +69,14 @@ impl MetalCtx {
         }
     }
 
-    fn upload_instances(
-        &mut self,
-        offsets: &[[f32; 2]],
-        colors: &[[f32; 4]],
-        cells: &[u32],
-    ) -> Result<(), String> {
+    fn upload_instances(&mut self, instances: &[GlyphInstance]) -> Result<(), String> {
         self.buffers
-            .upload_instances(self.context.device(), offsets, colors, cells)
+            .upload_instances(self.context.device(), instances)
     }
 
     pub fn render(&mut self, frame: &Frame, atlas: &mut Atlas) {
         self.sync_atlas(atlas);
-        if let Err(e) = self.upload_instances(frame.offsets, frame.colors, frame.cells) {
+        if let Err(e) = self.upload_instances(frame.instances) {
             eprintln!("{e}");
             return;
         }
