@@ -3,6 +3,9 @@ mod coretext;
 #[cfg(target_os = "macos")]
 pub use coretext::Font;
 
+mod atlas;
+pub use atlas::Atlas;
+
 #[derive(Clone, Copy)]
 pub struct Metrics {
     pub cell_width: f32,

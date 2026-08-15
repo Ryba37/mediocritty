@@ -34,6 +34,20 @@ impl ApplicationHandler for App {
             }
         };
 
+        let bm = font.rasterize('g').unwrap();
+
+        for y in 0..bm.height {
+            let row: String = (0..bm.width)
+                .map(|x| match bm.data[y * bm.width + x] {
+                    0..=63 => '*',
+                    64..=127 => '.',
+                    128..=191 => '+',
+                    _ => '#',
+                })
+                .collect();
+            println!("{row}");
+        }
+
         let renderer = match gpu::Renderer::new(&window, font.metrics()) {
             Ok(r) => r,
             Err(e) => {
