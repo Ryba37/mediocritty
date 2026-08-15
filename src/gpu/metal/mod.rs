@@ -27,7 +27,8 @@ const BG: [f32; 3] = [0.07, 0.08, 0.10];
 
 pub struct MetalCtx {
     context: Context,
-    pipeline: Pipeline,
+    glyph_pipeline: Pipeline,
+    bg_pipeline: Pipeline,
     buffers: Buffers,
     atlas_texture: AtlasTexture,
 }
@@ -35,7 +36,8 @@ pub struct MetalCtx {
 impl MetalCtx {
     pub fn new(window: &Window, metrics: Metrics, atlas: &Atlas) -> Result<Self, String> {
         let context = Context::new(window)?;
-        let pipeline = pipeline::create(context.device())?;
+        let glyph_pipeline = pipeline::glyph(context.device())?;
+        let bg_pipeline = pipeline::bg(context.device())?;
 
         let size = window.inner_size();
         let uniforms = Uniforms {
@@ -51,7 +53,8 @@ impl MetalCtx {
 
         Ok(Self {
             context,
-            pipeline,
+            glyph_pipeline,
+            bg_pipeline,
             buffers,
             atlas_texture,
         })
@@ -69,14 +72,14 @@ impl MetalCtx {
         }
     }
 
-    fn upload_instances(&mut self, instances: &[GlyphInstance]) -> Result<(), String> {
+    fn upload(&mut self, frame: &Frame) -> Result<(), String> {
         self.buffers
-            .upload_instances(self.context.device(), instances)
+            .upload(self.context.device(), frame.glyphs, frame.bg)
     }
 
     pub fn render(&mut self, frame: &Frame, atlas: &mut Atlas) {
         self.sync_atlas(atlas);
-        if let Err(e) = self.upload_instances(frame.instances) {
+        if let Err(e) = self.upload(frame) {
             eprintln!("{e}");
             return;
         }
@@ -106,16 +109,28 @@ impl MetalCtx {
                 return;
             };
 
-            encoder.setRenderPipelineState(&self.pipeline);
-            self.buffers.bind(&encoder);
-            self.atlas_texture.bind(&encoder);
+            self.buffers.bind_common(&encoder);
 
-            if self.buffers.instance_count() > 0 {
+            if self.buffers.bg_count() > 0 {
+                encoder.setRenderPipelineState(&self.bg_pipeline);
+                self.buffers.bind_bg(&encoder);
                 encoder.drawPrimitives_vertexStart_vertexCount_instanceCount(
                     MTLPrimitiveType::Triangle,
                     0,
                     self.buffers.vertex_count(),
-                    self.buffers.instance_count(),
+                    self.buffers.bg_count(),
+                );
+            }
+
+            if self.buffers.glyph_count() > 0 {
+                encoder.setRenderPipelineState(&self.glyph_pipeline);
+                self.buffers.bind_glyphs(&encoder);
+                self.atlas_texture.bind(&encoder);
+                encoder.drawPrimitives_vertexStart_vertexCount_instanceCount(
+                    MTLPrimitiveType::Triangle,
+                    0,
+                    self.buffers.vertex_count(),
+                    self.buffers.glyph_count(),
                 );
             }
 

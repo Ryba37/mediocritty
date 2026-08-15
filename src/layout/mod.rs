@@ -2,6 +2,7 @@ use crate::color::srgb_to_linear;
 use crate::font::FontCache;
 
 const FG: [f32; 3] = [0.9, 0.9, 0.85];
+const BG_HIGHLIGHT: [f32; 3] = [0.16, 0.18, 0.24];
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -12,12 +13,23 @@ pub struct GlyphInstance {
     pub _pad: u32,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct BgRect {
+    pub color: [f32; 4],
+    pub offset: [f32; 2],
+    pub width: f32,
+    pub _pad: f32,
+}
+
 pub struct Layout {
-    instances: Vec<GlyphInstance>,
+    glyphs: Vec<GlyphInstance>,
+    bg: Vec<BgRect>,
 }
 
 pub struct Frame<'a> {
-    pub instances: &'a [GlyphInstance],
+    pub glyphs: &'a [GlyphInstance],
+    pub bg: &'a [BgRect],
 }
 
 impl Default for Layout {
@@ -29,22 +41,20 @@ impl Default for Layout {
 impl Layout {
     pub fn new() -> Self {
         Self {
-            instances: Vec::new(),
+            glyphs: Vec::new(),
+            bg: Vec::new(),
         }
     }
 
     pub fn build(&mut self, text: &str, cache: &mut FontCache) -> Frame<'_> {
-        self.instances.clear();
+        self.glyphs.clear();
+        self.bg.clear();
 
-        let fg = [
-            srgb_to_linear(FG[0]),
-            srgb_to_linear(FG[1]),
-            srgb_to_linear(FG[2]),
-            1.0,
-        ];
+        let fg = linear(FG);
+        let highlight = linear(BG_HIGHLIGHT);
 
         for (i, ch) in text.chars().enumerate() {
-            self.instances.push(GlyphInstance {
+            self.glyphs.push(GlyphInstance {
                 color: fg,
                 offset: [i as f32, 0.0],
                 cell: cache.get_or_insert(ch),
@@ -52,8 +62,25 @@ impl Layout {
             });
         }
 
+        self.bg.push(BgRect {
+            color: highlight,
+            offset: [0.0, 0.0],
+            width: self.glyphs.len() as f32,
+            _pad: 0.0,
+        });
+
         Frame {
-            instances: &self.instances,
+            glyphs: &self.glyphs,
+            bg: &self.bg,
         }
     }
+}
+
+fn linear(c: [f32; 3]) -> [f32; 4] {
+    [
+        srgb_to_linear(c[0]),
+        srgb_to_linear(c[1]),
+        srgb_to_linear(c[2]),
+        1.0,
+    ]
 }

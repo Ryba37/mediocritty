@@ -3,7 +3,7 @@ use std::ptr::NonNull;
 use objc2::runtime::ProtocolObject;
 use objc2_metal::{MTLBuffer, MTLDevice, MTLRenderCommandEncoder, MTLResourceOptions};
 
-use crate::layout::GlyphInstance;
+use crate::layout::{BgRect, GlyphInstance};
 
 use super::types::{Buffer, Device};
 
@@ -17,6 +17,7 @@ const QUAD_POSITIONS: [[f32; 2]; 6] = [
 ];
 
 const INITIAL_CAPACITY: usize = 4096;
+const BG_INITIAL_CAPACITY: usize = 256;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -28,14 +29,54 @@ pub struct Uniforms {
     pub pad: u32,
 }
 
+struct InstanceBuffer {
+    buffer: Buffer,
+    capacity: usize,
+    count: usize,
+    elem_size: usize,
+}
+
 pub struct Buffers {
     vertex: Buffer,
     vertex_count: usize,
-    instances: Buffer,
-    capacity: usize,
-    instance_count: usize,
+    glyphs: InstanceBuffer,
+    bg: InstanceBuffer,
     uniform: Buffer,
     uniforms: Uniforms,
+}
+
+impl InstanceBuffer {
+    fn new<T>(device: &Device, capacity: usize) -> Result<Self, String> {
+        Ok(Self {
+            buffer: empty_buffer::<T>(device, capacity)?,
+            capacity,
+            count: 0,
+            elem_size: size_of::<T>(),
+        })
+    }
+
+    fn upload<T>(&mut self, device: &Device, data: &[T]) -> Result<(), String> {
+        debug_assert_eq!(self.elem_size, size_of::<T>());
+
+        self.count = data.len();
+
+        if data.is_empty() {
+            return Ok(());
+        }
+
+        if data.len() > self.capacity {
+            let capacity = data.len().next_power_of_two();
+            self.buffer = empty_buffer::<T>(device, capacity)?;
+            self.capacity = capacity;
+        }
+
+        unsafe {
+            let dst = self.buffer.contents().cast::<T>().as_ptr();
+            std::ptr::copy_nonoverlapping(data.as_ptr(), dst, data.len());
+        }
+
+        Ok(())
+    }
 }
 
 impl Buffers {
@@ -43,9 +84,8 @@ impl Buffers {
         Ok(Self {
             vertex: make_buffer(device, &QUAD_POSITIONS)?,
             vertex_count: QUAD_POSITIONS.len(),
-            instances: empty_buffer::<GlyphInstance>(device, INITIAL_CAPACITY)?,
-            capacity: INITIAL_CAPACITY,
-            instance_count: 0,
+            glyphs: InstanceBuffer::new::<GlyphInstance>(device, INITIAL_CAPACITY)?,
+            bg: InstanceBuffer::new::<BgRect>(device, BG_INITIAL_CAPACITY)?,
             uniform: make_buffer(device, &[uniforms])?,
             uniforms,
         })
@@ -55,8 +95,12 @@ impl Buffers {
         self.vertex_count
     }
 
-    pub fn instance_count(&self) -> usize {
-        self.instance_count
+    pub fn glyph_count(&self) -> usize {
+        self.glyphs.count
+    }
+
+    pub fn bg_count(&self) -> usize {
+        self.bg.count
     }
 
     pub fn set_screen(&mut self, screen: [f32; 2]) {
@@ -69,36 +113,32 @@ impl Buffers {
         self.write_uniforms();
     }
 
-    pub fn upload_instances(
+    pub fn upload(
         &mut self,
         device: &Device,
-        instances: &[GlyphInstance],
+        glyphs: &[GlyphInstance],
+        bg: &[BgRect],
     ) -> Result<(), String> {
-        self.instance_count = instances.len();
-
-        if instances.is_empty() {
-            return Ok(());
-        }
-
-        if instances.len() > self.capacity {
-            let capacity = instances.len().next_power_of_two();
-            self.instances = empty_buffer::<GlyphInstance>(device, capacity)?;
-            self.capacity = capacity;
-        }
-
-        unsafe {
-            let dst = self.instances.contents().cast::<GlyphInstance>().as_ptr();
-            std::ptr::copy_nonoverlapping(instances.as_ptr(), dst, instances.len());
-        }
-
-        Ok(())
+        self.glyphs.upload(device, glyphs)?;
+        self.bg.upload(device, bg)
     }
 
-    pub fn bind(&self, encoder: &ProtocolObject<dyn MTLRenderCommandEncoder>) {
+    pub fn bind_common(&self, encoder: &ProtocolObject<dyn MTLRenderCommandEncoder>) {
         unsafe {
             encoder.setVertexBuffer_offset_atIndex(Some(&self.vertex), 0, 0);
-            encoder.setVertexBuffer_offset_atIndex(Some(&self.instances), 0, 1);
             encoder.setVertexBuffer_offset_atIndex(Some(&self.uniform), 0, 3);
+        }
+    }
+
+    pub fn bind_glyphs(&self, encoder: &ProtocolObject<dyn MTLRenderCommandEncoder>) {
+        unsafe {
+            encoder.setVertexBuffer_offset_atIndex(Some(&self.glyphs.buffer), 0, 1);
+        }
+    }
+
+    pub fn bind_bg(&self, encoder: &ProtocolObject<dyn MTLRenderCommandEncoder>) {
+        unsafe {
+            encoder.setVertexBuffer_offset_atIndex(Some(&self.bg.buffer), 0, 1);
         }
     }
 
