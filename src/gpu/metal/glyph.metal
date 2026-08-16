@@ -5,6 +5,7 @@ struct VsOut {
     float4 position [[position]];
     float4 color;
     float2 uv;
+    float gamma;
 };
 
 struct Uniforms {
@@ -19,7 +20,7 @@ struct GlyphInstance {
     float4 color;
     float2 offset;
     uint cell;
-    uint pad;
+    float gamma;
 };
 
 vertex VsOut vs_main(uint vid [[vertex_id]],
@@ -39,12 +40,13 @@ vertex VsOut vs_main(uint vid [[vertex_id]],
     out.position = float4(ndc.x, -ndc.y, 0.0, 1.0);
     out.uv = (origin + positions[vid] * u.cell) / u.atlas;
     out.color = inst.color;
+    out.gamma = inst.gamma;
     return out;
 }
 
 fragment float4 fs_main(VsOut in [[stage_in]],
                         texture2d<float> atlas [[texture(0)]],
                         sampler samp [[sampler(0)]]) {
-    float coverage = atlas.sample(samp, in.uv).r;
+    float coverage = pow(atlas.sample(samp, in.uv).r, in.gamma);
     return float4(in.color.rgb, in.color.a * coverage);
 }

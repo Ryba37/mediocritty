@@ -9,7 +9,7 @@ use winit::window::Window;
 use crate::{
     color::srgb_to_linear,
     font::{Atlas, Metrics},
-    layout::{Frame, GlyphInstance},
+    layout::Frame,
 };
 
 use atlas_texture::AtlasTexture;
