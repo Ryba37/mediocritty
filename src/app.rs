@@ -99,6 +99,7 @@ impl ApplicationHandler for App {
                 renderer.resize(size.width, size.height, window.scale_factor());
                 let frame = layout.build("mediocritty lol", cache);
                 renderer.render(&frame, cache.atlas_mut());
+                window.request_redraw();
             }
             // todo: пересоздавать шрифт при ScaleFactorChanged
             _ => (),

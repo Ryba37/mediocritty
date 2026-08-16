@@ -2,7 +2,7 @@ use objc2::rc::Retained;
 use objc2_app_kit::NSView;
 use objc2_core_foundation::CGSize;
 use objc2_metal::MTLDevice;
-use objc2_quartz_core::CAMetalLayer;
+use objc2_quartz_core::{CAMetalLayer, CATransaction};
 use winit::dpi::PhysicalSize;
 use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use winit::window::Window;
@@ -47,8 +47,11 @@ impl Context {
 
     pub fn resize(&self, width: u32, height: u32, scale_factor: f64) {
         self.layer.setContentsScale(scale_factor);
+        CATransaction::begin();
+        CATransaction::setDisableActions(true);
         self.layer
             .setDrawableSize(CGSize::new(width as f64, height as f64));
+        CATransaction::commit();
     }
 
     fn create_layer(
