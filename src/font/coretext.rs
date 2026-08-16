@@ -122,14 +122,16 @@ impl Font {
     }
 
     fn glyph_for(inner: &CFRetained<CTFont>, ch: char) -> Option<CGGlyph> {
-        let chars: [u16; 1] = [ch as u16];
-        let mut glyphs: [CGGlyph; 1] = [0];
+        let mut chars = [0u16; 2];
+        let len = ch.encode_utf16(&mut chars).len();
+
+        let mut glyphs: [CGGlyph; 2] = [0; 2];
 
         let ok = unsafe {
             inner.glyphs_for_characters(
                 NonNull::from(&chars).cast(),
                 NonNull::from(&mut glyphs).cast(),
-                1,
+                len as isize,
             )
         };
 
