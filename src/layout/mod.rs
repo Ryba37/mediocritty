@@ -58,13 +58,18 @@ impl Layout {
         let window_bg = to_linear(theme::BACKGROUND);
         let cursor_point = content.cursor.point;
 
+        let block_cursor = matches!(
+            content.cursor.shape,
+            CursorShape::Block | CursorShape::HollowBlock
+        );
+
         for item in content.display_iter {
             let cell = item.cell;
             let col = item.point.column.0 as f32;
             let row = item.point.line.0 as f32;
 
             let inverse = cell.flags.contains(Flags::INVERSE);
-            let at_cursor = item.point == cursor_point;
+            let at_cursor = block_cursor && item.point == cursor_point;
 
             let (mut fg, mut bg) = (
                 resolve(cell.fg, colors, true),

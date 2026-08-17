@@ -23,7 +23,7 @@ mod context;
 mod pipeline;
 mod types;
 
-const BG: [f32; 3] = [0.07, 0.08, 0.10];
+const BG: [f32; 3] = [0.157, 0.157, 0.157];
 
 pub struct MetalCtx {
     context: Context,
