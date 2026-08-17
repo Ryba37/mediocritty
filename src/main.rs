@@ -9,6 +9,7 @@ mod gpu;
 mod input;
 mod layout;
 mod term;
+mod theme;
 
 fn main() {
     let event_loop = EventLoop::<UserEvent>::with_user_event()

@@ -1,12 +1,12 @@
 use alacritty_terminal::term::RenderableContent;
-use alacritty_terminal::vte::ansi::CursorShape;
+use alacritty_terminal::term::cell::Flags;
+use alacritty_terminal::term::color::Colors;
+use alacritty_terminal::vte::ansi::{Color, CursorShape, NamedColor};
 
 use crate::color::srgb_to_linear;
 use crate::font::FontCache;
+use crate::theme;
 
-const FG: [f32; 3] = [0.95, 0.95, 0.93];
-const BG: [f32; 3] = [0.07, 0.08, 0.10];
-const CURSOR: [f32; 3] = [0.8, 0.8, 0.8];
 const GAMMA_STRENGTH: f32 = 0.2;
 
 #[repr(C)]
@@ -54,49 +54,105 @@ impl Layout {
         self.glyphs.clear();
         self.bg.clear();
 
-        let fg = linear(FG);
-        let gamma = gamma(fg, linear(BG));
+        let colors = content.colors;
+        let window_bg = to_linear(theme::BACKGROUND);
+        let cursor_point = content.cursor.point;
 
         for item in content.display_iter {
-            let ch = item.cell.c;
+            let cell = item.cell;
+            let col = item.point.column.0 as f32;
+            let row = item.point.line.0 as f32;
 
-            if ch == ' ' {
+            let inverse = cell.flags.contains(Flags::INVERSE);
+            let at_cursor = item.point == cursor_point;
+
+            let (mut fg, mut bg) = (
+                resolve(cell.fg, colors, true),
+                resolve(cell.bg, colors, false),
+            );
+
+            if inverse != at_cursor {
+                std::mem::swap(&mut fg, &mut bg);
+            }
+
+            if bg != window_bg {
+                self.bg.push(BgRect {
+                    color: bg,
+                    offset: [col, row],
+                    size: [1.0, 1.0],
+                });
+            }
+
+            if cell.c == ' ' {
                 continue;
             }
 
             self.glyphs.push(GlyphInstance {
                 color: fg,
-                offset: [item.point.column.0 as f32, item.point.line.0 as f32],
-                cell: cache.get_or_insert(ch),
-                gamma,
+                offset: [col, row],
+                cell: cache.get_or_insert(cell.c),
+                gamma: gamma(fg, bg),
             });
         }
 
-        let cursor = content.cursor;
-
-        if let Some(size) = cursor_size(cursor.shape) {
-            self.bg.push(BgRect {
-                color: linear(CURSOR),
-                offset: [
-                    cursor.point.column.0 as f32,
-                    cursor.point.line.0 as f32 + cursor_y_offset(cursor.shape),
-                ],
-                size,
-            });
-        }
+        self.push_cursor(content.cursor.shape, cursor_point);
 
         Frame {
             glyphs: &self.glyphs,
             bg: &self.bg,
         }
     }
+
+    fn push_cursor(&mut self, shape: CursorShape, point: alacritty_terminal::index::Point) {
+        let size = match shape {
+            CursorShape::Block | CursorShape::HollowBlock => return,
+            CursorShape::Underline => [1.0, 0.15],
+            CursorShape::Beam => [0.15, 1.0],
+            CursorShape::Hidden => return,
+        };
+
+        let y_offset = if shape == CursorShape::Underline {
+            0.85
+        } else {
+            0.0
+        };
+
+        self.bg.push(BgRect {
+            color: to_linear(theme::CURSOR),
+            offset: [point.column.0 as f32, point.line.0 as f32 + y_offset],
+            size,
+        });
+    }
 }
 
-fn linear(c: [f32; 3]) -> [f32; 4] {
+fn resolve(color: Color, colors: &Colors, is_fg: bool) -> [f32; 4] {
+    let rgb = match color {
+        Color::Spec(rgb) => [rgb.r, rgb.g, rgb.b],
+        Color::Indexed(i) => match colors[i as usize] {
+            Some(rgb) => [rgb.r, rgb.g, rgb.b],
+            None => theme::indexed(i),
+        },
+        Color::Named(named) => match named {
+            NamedColor::Foreground => theme::FOREGROUND,
+            NamedColor::Background => theme::BACKGROUND,
+            NamedColor::Cursor => theme::CURSOR,
+            other => match colors[other as usize] {
+                Some(rgb) => [rgb.r, rgb.g, rgb.b],
+                None => theme::indexed(other as u8),
+            },
+        },
+    };
+
+    let _ = is_fg;
+
+    to_linear(rgb)
+}
+
+fn to_linear(rgb: [u8; 3]) -> [f32; 4] {
     [
-        srgb_to_linear(c[0]),
-        srgb_to_linear(c[1]),
-        srgb_to_linear(c[2]),
+        srgb_to_linear(rgb[0] as f32 / 255.0),
+        srgb_to_linear(rgb[1] as f32 / 255.0),
+        srgb_to_linear(rgb[2] as f32 / 255.0),
         1.0,
     ]
 }
@@ -107,20 +163,4 @@ fn luminance(c: [f32; 4]) -> f32 {
 
 fn gamma(fg: [f32; 4], bg: [f32; 4]) -> f32 {
     1.0 + GAMMA_STRENGTH * (luminance(fg) - luminance(bg))
-}
-
-fn cursor_size(shape: CursorShape) -> Option<[f32; 2]> {
-    match shape {
-        CursorShape::Block | CursorShape::HollowBlock => Some([1.0, 1.0]),
-        CursorShape::Underline => Some([1.0, 0.15]),
-        CursorShape::Beam => Some([0.15, 1.0]),
-        CursorShape::Hidden => None,
-    }
-}
-
-fn cursor_y_offset(shape: CursorShape) -> f32 {
-    match shape {
-        CursorShape::Underline => 0.85,
-        _ => 0.0,
-    }
 }
