@@ -1,9 +1,11 @@
+use alacritty_terminal::term::RenderableContent;
+
 use crate::color::srgb_to_linear;
 use crate::font::FontCache;
 
-const DARK: [f32; 3] = [0.05, 0.05, 0.06];
-const LIGHT: [f32; 3] = [0.95, 0.95, 0.93];
-const GAMMA_STRENGTH: f32 = 0.4;
+const FG: [f32; 3] = [0.95, 0.95, 0.93];
+const BG: [f32; 3] = [0.07, 0.08, 0.10];
+const GAMMA_STRENGTH: f32 = 0.2;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -47,30 +49,27 @@ impl Layout {
         }
     }
 
-    pub fn build(&mut self, text: &str, cache: &mut FontCache) -> Frame<'_> {
+    pub fn build(&mut self, content: RenderableContent, cache: &mut FontCache) -> Frame<'_> {
         self.glyphs.clear();
         self.bg.clear();
 
-        let dark = linear(DARK);
-        let light = linear(LIGHT);
-        let width = text.chars().count() as f32;
+        let fg = linear(FG);
+        let gamma = gamma(fg, linear(BG));
 
-        self.bg.push(BgRect {
-            color: dark,
-            offset: [0.0, 0.0],
-            width,
-            _pad: 0.0,
-        });
+        for item in content.display_iter {
+            let ch = item.cell.c;
 
-        self.bg.push(BgRect {
-            color: light,
-            offset: [0.0, 1.0],
-            width,
-            _pad: 0.0,
-        });
+            if ch == ' ' {
+                continue;
+            }
 
-        self.push_line(text, cache, light, dark, 0.0);
-        self.push_line(text, cache, dark, light, 1.0);
+            self.glyphs.push(GlyphInstance {
+                color: fg,
+                offset: [item.point.column.0 as f32, item.point.line.0 as f32],
+                cell: cache.get_or_insert(ch),
+                gamma,
+            });
+        }
 
         Frame {
             glyphs: &self.glyphs,

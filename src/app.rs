@@ -1,23 +1,54 @@
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
-use winit::event_loop::ActiveEventLoop;
+use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
 use winit::window::{Window, WindowId};
 
 use crate::font::{Font, FontCache};
 use crate::gpu;
 use crate::layout::Layout;
+use crate::term::{EventProxy, Terminal, UserEvent};
 
 const FONT_SIZE: f64 = 15.0;
 
-#[derive(Default)]
 pub struct App {
     window: Option<Window>,
     renderer: Option<gpu::Renderer>,
     cache: Option<FontCache>,
     layout: Option<Layout>,
+    terminal: Option<Terminal>,
+    proxy: EventLoopProxy<UserEvent>,
 }
 
-impl ApplicationHandler for App {
+impl App {
+    pub fn new(proxy: EventLoopProxy<UserEvent>) -> Self {
+        Self {
+            proxy,
+            window: None,
+            renderer: None,
+            cache: None,
+            layout: None,
+            terminal: None,
+        }
+    }
+
+    fn redraw(&mut self) {
+        let (Some(renderer), Some(cache), Some(layout), Some(terminal)) = (
+            &mut self.renderer,
+            &mut self.cache,
+            &mut self.layout,
+            &self.terminal,
+        ) else {
+            return;
+        };
+
+        let term = terminal.term().lock();
+        let frame = layout.build(term.renderable_content(), cache);
+
+        renderer.render(&frame, cache.atlas_mut());
+    }
+}
+
+impl ApplicationHandler<UserEvent> for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.renderer.is_some() {
             return;
@@ -56,12 +87,30 @@ impl ApplicationHandler for App {
             }
         };
 
-        let layout = Layout::new();
+        let size = window.inner_size();
+        let cols = (size.width / metrics.cell_width).max(1) as usize;
+        let rows = (size.height / metrics.cell_height).max(1) as usize;
+
+        let terminal = match Terminal::new(
+            EventProxy::new(self.proxy.clone()),
+            cols,
+            rows,
+            metrics.cell_width as u16,
+            metrics.cell_height as u16,
+        ) {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("{e}");
+                event_loop.exit();
+                return;
+            }
+        };
 
         self.window = Some(window);
         self.renderer = Some(renderer);
         self.cache = Some(cache);
-        self.layout = Some(layout);
+        self.layout = Some(Layout::new());
+        self.terminal = Some(terminal);
 
         self.window.as_ref().unwrap().request_redraw();
     }
@@ -77,12 +126,7 @@ impl ApplicationHandler for App {
             return;
         }
 
-        let (Some(window), Some(renderer), Some(cache), Some(layout)) = (
-            &self.window,
-            &mut self.renderer,
-            &mut self.cache,
-            &mut self.layout,
-        ) else {
+        let Some(window) = &self.window else {
             return;
         };
 
@@ -92,17 +136,38 @@ impl ApplicationHandler for App {
 
         match event {
             WindowEvent::RedrawRequested => {
-                let frame = layout.build("mediocritty lol", cache);
-                renderer.render(&frame, cache.atlas_mut());
+                self.redraw();
             }
             WindowEvent::Resized(size) => {
-                renderer.resize(size.width, size.height, window.scale_factor());
-                let frame = layout.build("mediocritty lol", cache);
-                renderer.render(&frame, cache.atlas_mut());
-                window.request_redraw();
+                let scale = window.scale_factor();
+
+                if let Some(renderer) = &mut self.renderer {
+                    renderer.resize(size.width, size.height, scale);
+                }
+
+                self.redraw();
+
+                if let Some(window) = &self.window {
+                    window.request_redraw();
+                }
             }
-            // todo: пересоздавать шрифт при ScaleFactorChanged
             _ => (),
+        }
+    }
+
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
+        match event {
+            UserEvent::Exit => event_loop.exit(),
+            UserEvent::Wakeup => {
+                if let Some(window) = &self.window {
+                    window.request_redraw();
+                }
+            }
+            UserEvent::Title(s) => {
+                if let Some(window) = &self.window {
+                    window.set_title(&s);
+                }
+            }
         }
     }
 }
