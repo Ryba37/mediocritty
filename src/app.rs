@@ -1,6 +1,7 @@
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
+use winit::keyboard::ModifiersState;
 use winit::window::{Window, WindowId};
 
 use crate::font::{Font, FontCache};
@@ -17,6 +18,7 @@ pub struct App {
     layout: Option<Layout>,
     terminal: Option<Terminal>,
     proxy: EventLoopProxy<UserEvent>,
+    modifiers: ModifiersState,
 }
 
 impl App {
@@ -28,6 +30,7 @@ impl App {
             cache: None,
             layout: None,
             terminal: None,
+            modifiers: ModifiersState::default(),
         }
     }
 
@@ -155,12 +158,13 @@ impl ApplicationHandler<UserEvent> for App {
                 }
             }
             WindowEvent::KeyboardInput { event, .. } => {
-                if let Some(bytes) = crate::input::key_to_bytes(&event)
+                if let Some(bytes) = crate::input::key_to_bytes(&event, self.modifiers)
                     && let Some(terminal) = &self.terminal
                 {
                     terminal.write(bytes);
                 }
             }
+            WindowEvent::ModifiersChanged(m) => self.modifiers = m.state(),
             _ => (),
         }
     }

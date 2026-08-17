@@ -3,3 +3,4 @@
 - fix emoji's
 - fix scaling when ScaleFactorChanged
 - fix zoom in macos
+- fallback fonts
