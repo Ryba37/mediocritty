@@ -151,6 +151,13 @@ impl ApplicationHandler<UserEvent> for App {
                     window.request_redraw();
                 }
             }
+            WindowEvent::KeyboardInput { event, .. } => {
+                if let Some(bytes) = crate::input::key_to_bytes(&event)
+                    && let Some(terminal) = &self.terminal
+                {
+                    terminal.write(bytes);
+                }
+            }
             _ => (),
         }
     }

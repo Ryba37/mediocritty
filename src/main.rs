@@ -6,6 +6,7 @@ mod app;
 mod color;
 mod font;
 mod gpu;
+mod input;
 mod layout;
 mod term;
 
