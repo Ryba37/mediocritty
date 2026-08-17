@@ -3,8 +3,7 @@ use std::thread::JoinHandle;
 
 use alacritty_terminal::{
     Term,
-    event::Notify,
-    event::WindowSize,
+    event::{Notify, OnResize, WindowSize},
     event_loop::{EventLoop, Msg, Notifier, State},
     sync::FairMutex,
     term::Config,
@@ -72,6 +71,19 @@ impl Terminal {
         if let Some(thread) = self.io_thread.take() {
             let _ = thread.join();
         }
+    }
+
+    pub fn resize(&mut self, cols: usize, rows: usize, cell_width: u16, cell_height: u16) {
+        let term_size = TermSize::new(cols, rows);
+        let window_size = WindowSize {
+            num_lines: rows as u16,
+            num_cols: cols as u16,
+            cell_width,
+            cell_height,
+        };
+
+        self.term.lock().resize(term_size);
+        self.notifier.on_resize(window_size);
     }
 }
 

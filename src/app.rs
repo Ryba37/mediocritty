@@ -1,10 +1,11 @@
 use winit::application::ApplicationHandler;
+use winit::dpi::PhysicalSize;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
 use winit::keyboard::ModifiersState;
 use winit::window::{Window, WindowId};
 
-use crate::font::{Font, FontCache};
+use crate::font::{Font, FontCache, Metrics};
 use crate::gpu;
 use crate::layout::Layout;
 use crate::term::{EventProxy, Terminal, UserEvent};
@@ -19,6 +20,7 @@ pub struct App {
     terminal: Option<Terminal>,
     proxy: EventLoopProxy<UserEvent>,
     modifiers: ModifiersState,
+    metrics: Option<Metrics>,
 }
 
 impl App {
@@ -31,6 +33,7 @@ impl App {
             layout: None,
             terminal: None,
             modifiers: ModifiersState::default(),
+            metrics: None,
         }
     }
 
@@ -94,8 +97,7 @@ impl ApplicationHandler<UserEvent> for App {
         };
 
         let size = window.inner_size();
-        let cols = (size.width / metrics.cell_width).max(1) as usize;
-        let rows = (size.height / metrics.cell_height).max(1) as usize;
+        let (cols, rows) = grid_size(size, metrics);
 
         let terminal = match Terminal::new(
             EventProxy::new(self.proxy.clone()),
@@ -117,6 +119,7 @@ impl ApplicationHandler<UserEvent> for App {
         self.cache = Some(cache);
         self.layout = Some(Layout::new());
         self.terminal = Some(terminal);
+        self.metrics = Some(metrics);
 
         self.window.as_ref().unwrap().request_redraw();
     }
@@ -149,6 +152,17 @@ impl ApplicationHandler<UserEvent> for App {
 
                 if let Some(renderer) = &mut self.renderer {
                     renderer.resize(size.width, size.height, scale);
+                }
+
+                if let (Some(metrics), Some(terminal)) = (self.metrics, &mut self.terminal) {
+                    let (cols, rows) = grid_size(size, metrics);
+
+                    terminal.resize(
+                        cols,
+                        rows,
+                        metrics.cell_width as u16,
+                        metrics.cell_height as u16,
+                    );
                 }
 
                 self.redraw();
@@ -184,4 +198,11 @@ impl ApplicationHandler<UserEvent> for App {
             }
         }
     }
+}
+
+fn grid_size(size: PhysicalSize<u32>, metrics: Metrics) -> (usize, usize) {
+    let cols = (size.width / metrics.cell_width).max(1) as usize;
+    let rows = (size.height / metrics.cell_height).max(1) as usize;
+
+    (cols, rows)
 }

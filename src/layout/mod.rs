@@ -1,10 +1,12 @@
 use alacritty_terminal::term::RenderableContent;
+use alacritty_terminal::vte::ansi::CursorShape;
 
 use crate::color::srgb_to_linear;
 use crate::font::FontCache;
 
 const FG: [f32; 3] = [0.95, 0.95, 0.93];
 const BG: [f32; 3] = [0.07, 0.08, 0.10];
+const CURSOR: [f32; 3] = [0.8, 0.8, 0.8];
 const GAMMA_STRENGTH: f32 = 0.2;
 
 #[repr(C)]
@@ -21,8 +23,7 @@ pub struct GlyphInstance {
 pub struct BgRect {
     pub color: [f32; 4],
     pub offset: [f32; 2],
-    pub width: f32,
-    pub _pad: f32,
+    pub size: [f32; 2],
 }
 
 pub struct Layout {
@@ -71,29 +72,22 @@ impl Layout {
             });
         }
 
+        let cursor = content.cursor;
+
+        if let Some(size) = cursor_size(cursor.shape) {
+            self.bg.push(BgRect {
+                color: linear(CURSOR),
+                offset: [
+                    cursor.point.column.0 as f32,
+                    cursor.point.line.0 as f32 + cursor_y_offset(cursor.shape),
+                ],
+                size,
+            });
+        }
+
         Frame {
             glyphs: &self.glyphs,
             bg: &self.bg,
-        }
-    }
-
-    fn push_line(
-        &mut self,
-        text: &str,
-        cache: &mut FontCache,
-        fg: [f32; 4],
-        bg: [f32; 4],
-        row: f32,
-    ) {
-        let gamma = gamma(fg, bg);
-
-        for (i, ch) in text.chars().enumerate() {
-            self.glyphs.push(GlyphInstance {
-                color: fg,
-                offset: [i as f32, row],
-                cell: cache.get_or_insert(ch),
-                gamma,
-            });
         }
     }
 }
@@ -113,4 +107,20 @@ fn luminance(c: [f32; 4]) -> f32 {
 
 fn gamma(fg: [f32; 4], bg: [f32; 4]) -> f32 {
     1.0 + GAMMA_STRENGTH * (luminance(fg) - luminance(bg))
+}
+
+fn cursor_size(shape: CursorShape) -> Option<[f32; 2]> {
+    match shape {
+        CursorShape::Block | CursorShape::HollowBlock => Some([1.0, 1.0]),
+        CursorShape::Underline => Some([1.0, 0.15]),
+        CursorShape::Beam => Some([0.15, 1.0]),
+        CursorShape::Hidden => None,
+    }
+}
+
+fn cursor_y_offset(shape: CursorShape) -> f32 {
+    match shape {
+        CursorShape::Underline => 0.85,
+        _ => 0.0,
+    }
 }

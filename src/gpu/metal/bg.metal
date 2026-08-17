@@ -17,8 +17,7 @@ struct Uniforms {
 struct BgRect {
     float4 color;
     float2 offset;
-    float width;
-    float pad;
+    float2 size;
 };
 
 vertex VsOut vs_bg(uint vid [[vertex_id]],
@@ -30,7 +29,7 @@ vertex VsOut vs_bg(uint vid [[vertex_id]],
 
     BgRect r = rects[iid];
 
-    float2 local = positions[vid] * float2(r.width, 1.0);
+    float2 local = positions[vid] * r.size;
     float2 px = (r.offset + local) * u.cell;
     float2 ndc = px / u.screen * 2 - 1;
 
