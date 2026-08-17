@@ -58,7 +58,10 @@ impl ApplicationHandler<UserEvent> for App {
             .create_window(Window::default_attributes())
             .unwrap();
 
-        let font = match Font::new(None, FONT_SIZE * window.scale_factor()) {
+        let font = match Font::new(
+            Some("JetBrainsMonoNF-Regular"),
+            FONT_SIZE * window.scale_factor(),
+        ) {
             Ok(font) => font,
             Err(e) => {
                 eprintln!("{e}");

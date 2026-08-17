@@ -56,21 +56,27 @@ impl Atlas {
     pub fn insert_glyph(&mut self, bitmap: &Bitmap) -> u32 {
         debug_assert!(bitmap.width <= self.cell_width as usize);
         debug_assert!(bitmap.height <= self.cell_height as usize);
+        debug_assert!(bitmap.stride >= bitmap.width);
+        debug_assert!(bitmap.data.len() >= bitmap.stride * bitmap.height);
+
         if self.next >= self.cols * self.rows {
             self.grow();
         }
+
         let n = self.next;
         let (x, y, _, _) = self.cell_rect(n);
         let x = x as usize;
         let y = y as usize;
         let stride = self.stride() as usize;
+
         self.data
             .chunks_exact_mut(stride)
             .skip(y)
-            .zip(bitmap.data.chunks_exact(bitmap.width))
+            .zip(bitmap.data.chunks_exact(bitmap.stride))
             .for_each(|(dst, src)| {
-                dst[x..x + bitmap.width].copy_from_slice(src);
+                dst[x..x + bitmap.width].copy_from_slice(&src[..bitmap.width]);
             });
+
         self.dirty.push(n);
         self.next += 1;
         n

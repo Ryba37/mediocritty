@@ -1,11 +1,11 @@
 use std::ptr::NonNull;
 
-use objc2_core_foundation::{CFRetained, CGPoint, CGSize};
+use objc2_core_foundation::{CFRetained, CFString, CGPoint, CGSize};
 use objc2_core_graphics::{
-    CGBitmapContextCreate, CGBitmapContextGetData, CGColorSpace, CGContext, CGGlyph,
-    CGImageAlphaInfo,
+    CGBitmapContextCreate, CGBitmapContextGetBytesPerRow, CGBitmapContextGetData, CGColorSpace,
+    CGContext, CGGlyph, CGImageAlphaInfo,
 };
-use objc2_core_text::{CTFont, CTFontOrientation, CTFontUIFontType};
+use objc2_core_text::{CTFont, CTFontDescriptor, CTFontOrientation, CTFontUIFontType};
 
 use crate::font::{Bitmap, GlyphId, Metrics};
 
@@ -17,7 +17,21 @@ pub struct Font {
 impl Font {
     pub fn new(name: Option<&str>, size: f64) -> Result<Self, String> {
         match name {
-            Some(_name) => Err("not implemented yet".to_string()),
+            Some(name) => {
+                let desc = unsafe {
+                    CTFontDescriptor::with_name_and_size(&CFString::from_str(name), size)
+                };
+
+                let matched = unsafe { desc.matching_font_descriptor(None) }
+                    .ok_or_else(|| format!("font {name} not found"))?;
+
+                let inner =
+                    unsafe { CTFont::with_font_descriptor(&matched, size, std::ptr::null()) };
+
+                let metrics = Self::compute_metrics(&inner)?;
+
+                Ok(Self { inner, metrics })
+            }
             None => {
                 let inner = unsafe {
                     CTFont::new_ui_font_for_language(CTFontUIFontType::UserFixedPitch, size, None)
@@ -48,7 +62,7 @@ impl Font {
                 width,
                 height,
                 8,
-                width,
+                0,
                 Some(&space),
                 CGImageAlphaInfo::None.0,
             )
@@ -76,12 +90,19 @@ impl Font {
             return Err("no bitmap data".to_string());
         }
 
-        let data = unsafe { std::slice::from_raw_parts(ptr, width * height) }.to_vec();
+        let stride = CGBitmapContextGetBytesPerRow(Some(&ctx));
+
+        if stride < width {
+            return Err("bitmap stride smaller than width".to_string());
+        }
+
+        let data = unsafe { std::slice::from_raw_parts(ptr, stride * height) }.to_vec();
 
         Ok(Bitmap {
             data,
             width,
             height,
+            stride,
         })
     }
 

@@ -22,4 +22,5 @@ pub struct Bitmap {
     pub data: Vec<u8>,
     pub width: usize,
     pub height: usize,
+    pub stride: usize,
 }
