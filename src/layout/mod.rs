@@ -57,6 +57,7 @@ impl Layout {
         let colors = content.colors;
         let window_bg = to_linear(theme::BACKGROUND);
         let cursor_point = content.cursor.point;
+        let display_offset = content.display_offset as i32;
 
         let block_cursor = matches!(
             content.cursor.shape,
@@ -66,7 +67,7 @@ impl Layout {
         for item in content.display_iter {
             let cell = item.cell;
             let col = item.point.column.0 as f32;
-            let row = item.point.line.0 as f32;
+            let row = (item.point.line.0 + display_offset) as f32;
 
             let inverse = cell.flags.contains(Flags::INVERSE);
             let at_cursor = block_cursor && item.point == cursor_point;
@@ -100,7 +101,9 @@ impl Layout {
             });
         }
 
-        self.push_cursor(content.cursor.shape, cursor_point);
+        if display_offset == 0 {
+            self.push_cursor(content.cursor.shape, cursor_point);
+        }
 
         Frame {
             glyphs: &self.glyphs,

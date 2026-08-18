@@ -5,6 +5,7 @@ use alacritty_terminal::{
     Term,
     event::{Notify, OnResize, WindowSize},
     event_loop::{EventLoop, Msg, Notifier, State},
+    grid::Scroll,
     sync::FairMutex,
     term::{Config, TermMode},
     tty::{self, Pty},
@@ -75,6 +76,14 @@ impl Terminal {
         if let Some(thread) = self.io_thread.take() {
             let _ = thread.join();
         }
+    }
+
+    pub fn scroll(&mut self, delta: i32) {
+        if delta == 0 {
+            return;
+        }
+
+        self.term().lock().scroll_display(Scroll::Delta(delta));
     }
 
     pub fn resize(&mut self, cols: usize, rows: usize, cell_width: u16, cell_height: u16) {

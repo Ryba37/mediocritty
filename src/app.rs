@@ -21,6 +21,7 @@ pub struct App {
     proxy: EventLoopProxy<UserEvent>,
     modifiers: ModifiersState,
     metrics: Option<Metrics>,
+    scroll_accum: f64,
 }
 
 impl App {
@@ -34,6 +35,7 @@ impl App {
             terminal: None,
             modifiers: ModifiersState::default(),
             metrics: None,
+            scroll_accum: 0.0,
         }
     }
 
@@ -178,6 +180,18 @@ impl ApplicationHandler<UserEvent> for App {
                         crate::input::key_to_bytes(&event, self.modifiers, terminal.mode())
                 {
                     terminal.write(bytes);
+                }
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                let cell_height = self.metrics.map(|m| m.cell_height as f64).unwrap_or(0.0);
+                let lines =
+                    crate::input::scroll_delta_to_lines(delta, cell_height, &mut self.scroll_accum);
+
+                if lines != 0
+                    && let Some(terminal) = &mut self.terminal
+                {
+                    terminal.scroll(lines);
+                    window.request_redraw();
                 }
             }
             WindowEvent::ModifiersChanged(m) => self.modifiers = m.state(),
