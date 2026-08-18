@@ -1,10 +1,21 @@
+use alacritty_terminal::term::TermMode;
 use winit::event::{ElementState, KeyEvent};
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
 
-pub fn key_to_bytes(event: &KeyEvent, modifiers: ModifiersState) -> Option<Vec<u8>> {
+pub fn key_to_bytes(
+    event: &KeyEvent,
+    modifiers: ModifiersState,
+    mode: TermMode,
+) -> Option<Vec<u8>> {
     if event.state != ElementState::Pressed {
         return None;
+    }
+
+    if let Key::Named(named) = event.logical_key
+        && let Some(bytes) = app_cursor_key(&named, mode)
+    {
+        return Some(bytes);
     }
 
     if let Some(bytes) = named_key(&event.logical_key) {
@@ -83,4 +94,18 @@ fn control_byte(s: &str) -> Option<u8> {
         b' ' | b'@' => Some(0),
         _ => None,
     }
+}
+
+fn app_cursor_key(named: &NamedKey, mode: TermMode) -> Option<Vec<u8>> {
+    if !mode.contains(TermMode::APP_CURSOR) {
+        return None;
+    }
+    let bytes = match named {
+        NamedKey::ArrowUp => b"\x1bOA".to_vec(),
+        NamedKey::ArrowDown => b"\x1bOB".to_vec(),
+        NamedKey::ArrowRight => b"\x1bOC".to_vec(),
+        NamedKey::ArrowLeft => b"\x1bOD".to_vec(),
+        _ => return None,
+    };
+    Some(bytes)
 }

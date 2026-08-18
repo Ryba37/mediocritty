@@ -6,7 +6,7 @@ use alacritty_terminal::{
     event::{Notify, OnResize, WindowSize},
     event_loop::{EventLoop, Msg, Notifier, State},
     sync::FairMutex,
-    term::Config,
+    term::{Config, TermMode},
     tty::{self, Pty},
 };
 
@@ -63,6 +63,10 @@ impl Terminal {
 
     pub fn write(&self, data: Vec<u8>) {
         self.notifier.notify(data);
+    }
+
+    pub fn mode(&self) -> TermMode {
+        *self.term().lock().mode()
     }
 
     pub fn shutdown(&mut self) {

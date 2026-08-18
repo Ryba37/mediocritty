@@ -171,9 +171,11 @@ impl ApplicationHandler<UserEvent> for App {
                     window.request_redraw();
                 }
             }
+
             WindowEvent::KeyboardInput { event, .. } => {
-                if let Some(bytes) = crate::input::key_to_bytes(&event, self.modifiers)
-                    && let Some(terminal) = &self.terminal
+                if let Some(terminal) = &self.terminal
+                    && let Some(bytes) =
+                        crate::input::key_to_bytes(&event, self.modifiers, terminal.mode())
                 {
                     terminal.write(bytes);
                 }
