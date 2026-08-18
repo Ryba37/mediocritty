@@ -4,3 +4,6 @@
 - fix scaling when ScaleFactorChanged
 - fix zoom in macos
 - fallback fonts
+- do docs
+- add mouse support
+- fix \n

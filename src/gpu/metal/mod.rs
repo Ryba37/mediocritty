@@ -23,18 +23,22 @@ mod context;
 mod pipeline;
 mod types;
 
-const BG: [f32; 3] = [0.157, 0.157, 0.157];
-
 pub struct MetalCtx {
     context: Context,
     glyph_pipeline: Pipeline,
     bg_pipeline: Pipeline,
     buffers: Buffers,
     atlas_texture: AtlasTexture,
+    background: [f32; 3],
 }
 
 impl MetalCtx {
-    pub fn new(window: &Window, metrics: Metrics, atlas: &Atlas) -> Result<Self, String> {
+    pub fn new(
+        window: &Window,
+        metrics: Metrics,
+        atlas: &Atlas,
+        background: [u8; 3],
+    ) -> Result<Self, String> {
         let context = Context::new(window)?;
         let glyph_pipeline = pipeline::glyph(context.device())?;
         let bg_pipeline = pipeline::bg(context.device())?;
@@ -57,6 +61,7 @@ impl MetalCtx {
             bg_pipeline,
             buffers,
             atlas_texture,
+            background: linear_background(background),
         })
     }
 
@@ -95,9 +100,9 @@ impl MetalCtx {
             attachment.setTexture(Some(&drawable.texture()));
             attachment.setLoadAction(MTLLoadAction::Clear);
             attachment.setClearColor(MTLClearColor {
-                red: srgb_to_linear(BG[0]) as f64,
-                green: srgb_to_linear(BG[1]) as f64,
-                blue: srgb_to_linear(BG[2]) as f64,
+                red: self.background[0] as f64,
+                green: self.background[1] as f64,
+                blue: self.background[2] as f64,
                 alpha: 1.0,
             });
             attachment.setStoreAction(MTLStoreAction::Store);
@@ -140,4 +145,12 @@ impl MetalCtx {
             drawable.present();
         }
     }
+}
+
+fn linear_background(rgb: [u8; 3]) -> [f32; 3] {
+    [
+        srgb_to_linear(rgb[0] as f32 / 255.0),
+        srgb_to_linear(rgb[1] as f32 / 255.0),
+        srgb_to_linear(rgb[2] as f32 / 255.0),
+    ]
 }

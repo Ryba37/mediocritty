@@ -11,13 +11,11 @@ use winit::keyboard::{Key, ModifiersState};
 use winit::window::{Window, WindowId};
 
 use crate::clipboard::Clipboard;
+use crate::config::Config;
 use crate::font::{Font, FontCache, Metrics};
 use crate::gpu;
 use crate::layout::Layout;
 use crate::term::{EventProxy, Terminal, UserEvent};
-
-const FONT_SIZE: f64 = 15.0;
-const MULTI_CLICK_WINDOW: Duration = Duration::from_millis(400);
 
 pub struct App {
     window: Option<Window>,
@@ -35,10 +33,11 @@ pub struct App {
     last_click: Option<(Instant, Point)>,
     click_count: u8,
     focused: bool,
+    config: Config,
 }
 
 impl App {
-    pub fn new(proxy: EventLoopProxy<UserEvent>) -> Self {
+    pub fn new(proxy: EventLoopProxy<UserEvent>, config: Config) -> Self {
         Self {
             proxy,
             window: None,
@@ -55,6 +54,7 @@ impl App {
             last_click: None,
             click_count: 0,
             focused: true,
+            config,
         }
     }
 
@@ -87,6 +87,58 @@ impl App {
 
         renderer.render(&frame, cache.atlas_mut());
     }
+
+    fn reload_config(&mut self, config: Config) {
+        let Some(window) = &self.window else {
+            self.config = config;
+            return;
+        };
+
+        match Self::build_graphics(window, &config) {
+            Ok((metrics, cache, renderer)) => {
+                if let (Some(terminal), Some(old_metrics)) = (&mut self.terminal, self.metrics)
+                    && (metrics.cell_width != old_metrics.cell_width
+                        || metrics.cell_height != old_metrics.cell_height)
+                {
+                    let (cols, rows) = grid_size(window.inner_size(), metrics);
+                    terminal.resize(
+                        cols,
+                        rows,
+                        metrics.cell_width as u16,
+                        metrics.cell_height as u16,
+                    );
+                }
+
+                self.metrics = Some(metrics);
+                self.cache = Some(cache);
+                self.renderer = Some(renderer);
+            }
+            Err(e) => eprintln!("config reload: {e}, keeping previous font/renderer"),
+        }
+
+        if let Some(layout) = &mut self.layout {
+            layout.set_theme(&config);
+        }
+
+        self.config = config;
+        window.request_redraw();
+    }
+
+    fn build_graphics(
+        window: &Window,
+        config: &Config,
+    ) -> Result<(Metrics, FontCache, gpu::Renderer), String> {
+        let font = Font::new(
+            Some(&config.font.family),
+            config.font.size * window.scale_factor(),
+        )?;
+        let metrics = font.metrics();
+        let cache = FontCache::new(font)?;
+        let renderer =
+            gpu::Renderer::new(window, metrics, cache.atlas(), config.theme.background.0)?;
+
+        Ok((metrics, cache, renderer))
+    }
 }
 
 impl ApplicationHandler<UserEvent> for App {
@@ -99,31 +151,8 @@ impl ApplicationHandler<UserEvent> for App {
             .create_window(Window::default_attributes())
             .unwrap();
 
-        let font = match Font::new(
-            Some("JetBrainsMonoNF-Regular"),
-            FONT_SIZE * window.scale_factor(),
-        ) {
-            Ok(font) => font,
-            Err(e) => {
-                eprintln!("{e}");
-                event_loop.exit();
-                return;
-            }
-        };
-
-        let metrics = font.metrics();
-
-        let cache = match FontCache::new(font) {
-            Ok(c) => c,
-            Err(e) => {
-                eprintln!("{e}");
-                event_loop.exit();
-                return;
-            }
-        };
-
-        let renderer = match gpu::Renderer::new(&window, metrics, cache.atlas()) {
-            Ok(r) => r,
+        let (metrics, cache, renderer) = match Self::build_graphics(&window, &self.config) {
+            Ok(v) => v,
             Err(e) => {
                 eprintln!("{e}");
                 event_loop.exit();
@@ -152,7 +181,7 @@ impl ApplicationHandler<UserEvent> for App {
         self.window = Some(window);
         self.renderer = Some(renderer);
         self.cache = Some(cache);
-        self.layout = Some(Layout::new());
+        self.layout = Some(Layout::new(&self.config));
         self.terminal = Some(terminal);
         self.clipboard = Some(Clipboard::new());
         self.metrics = Some(metrics);
@@ -247,8 +276,12 @@ impl ApplicationHandler<UserEvent> for App {
 
             WindowEvent::MouseWheel { delta, .. } => {
                 let cell_height = self.metrics.map(|m| m.cell_height as f64).unwrap_or(0.0);
-                let lines =
-                    crate::input::scroll_delta_to_lines(delta, cell_height, &mut self.scroll_accum);
+                let lines = crate::input::scroll_delta_to_lines(
+                    delta,
+                    cell_height,
+                    &mut self.scroll_accum,
+                    self.config.lines_per_notch,
+                );
 
                 if lines != 0
                     && let Some(terminal) = &mut self.terminal
@@ -288,7 +321,9 @@ impl ApplicationHandler<UserEvent> for App {
                 let now = Instant::now();
                 self.click_count = match self.last_click {
                     Some((at, last_point))
-                        if last_point == point && now.duration_since(at) < MULTI_CLICK_WINDOW =>
+                        if last_point == point
+                            && now.duration_since(at)
+                                < Duration::from_millis(self.config.multi_click_window_ms) =>
                     {
                         self.click_count % 3 + 1
                     }
@@ -360,6 +395,7 @@ impl ApplicationHandler<UserEvent> for App {
                     terminal.write(formatter(&text).into_bytes());
                 }
             }
+            UserEvent::ConfigReload(config) => self.reload_config(config),
         }
     }
 }

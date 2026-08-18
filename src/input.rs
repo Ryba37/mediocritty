@@ -4,8 +4,6 @@ use winit::event::{ElementState, KeyEvent, MouseScrollDelta};
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
 
-const LINES_PER_NOTCH: f64 = 3.0;
-
 pub fn key_to_bytes(
     event: &KeyEvent,
     modifiers: ModifiersState,
@@ -51,9 +49,14 @@ pub fn key_to_bytes(
     Some(text.as_bytes().to_vec())
 }
 
-pub fn scroll_delta_to_lines(delta: MouseScrollDelta, cell_height: f64, accum: &mut f64) -> i32 {
+pub fn scroll_delta_to_lines(
+    delta: MouseScrollDelta,
+    cell_height: f64,
+    accum: &mut f64,
+    lines_per_notch: f64,
+) -> i32 {
     *accum += match delta {
-        MouseScrollDelta::LineDelta(_, y) => y as f64 * LINES_PER_NOTCH,
+        MouseScrollDelta::LineDelta(_, y) => y as f64 * lines_per_notch,
         MouseScrollDelta::PixelDelta(pos) if cell_height > 0.0 => pos.y / cell_height,
         MouseScrollDelta::PixelDelta(_) => 0.0,
     };

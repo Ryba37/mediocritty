@@ -5,6 +5,8 @@ use alacritty_terminal::{
 use std::sync::Arc;
 use winit::event_loop::EventLoopProxy;
 
+use crate::config::Config;
+
 #[allow(
     dead_code,
     reason = "used once the linux backend distinguishes primary selection"
@@ -18,6 +20,7 @@ pub enum UserEvent {
         ClipboardType,
         Arc<dyn Fn(&str) -> String + Sync + Send + 'static>,
     ),
+    ConfigReload(Config),
 }
 
 #[derive(Clone)]

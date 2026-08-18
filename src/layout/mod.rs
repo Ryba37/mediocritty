@@ -4,12 +4,31 @@ use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::color::Colors;
 use alacritty_terminal::vte::ansi::{Color, CursorShape, NamedColor};
 
-use crate::color::srgb_to_linear;
+use crate::color::{indexed, srgb_to_linear};
+use crate::config::Config;
 use crate::font::FontCache;
-use crate::theme;
 
-const GAMMA_STRENGTH: f32 = 0.2;
-const HOLLOW_CURSOR_THICKNESS: f32 = 0.08;
+struct Theme {
+    background: [u8; 3],
+    foreground: [u8; 3],
+    cursor: [u8; 3],
+    palette: [[u8; 3]; 16],
+    hollow_cursor_thickness: f32,
+    gamma_strength: f32,
+}
+
+impl Theme {
+    fn from_config(config: &Config) -> Self {
+        Self {
+            background: config.theme.background.0,
+            foreground: config.theme.foreground.0,
+            cursor: config.theme.cursor.0,
+            palette: config.theme.palette.to_array(),
+            hollow_cursor_thickness: config.cursor.hollow_cursor_thickness,
+            gamma_strength: config.font.gamma_strength,
+        }
+    }
+}
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -31,6 +50,7 @@ pub struct BgRect {
 pub struct Layout {
     glyphs: Vec<GlyphInstance>,
     bg: Vec<BgRect>,
+    theme: Theme,
 }
 
 pub struct Frame<'a> {
@@ -38,18 +58,17 @@ pub struct Frame<'a> {
     pub bg: &'a [BgRect],
 }
 
-impl Default for Layout {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Layout {
-    pub fn new() -> Self {
+    pub fn new(config: &Config) -> Self {
         Self {
             glyphs: Vec::new(),
             bg: Vec::new(),
+            theme: Theme::from_config(config),
         }
+    }
+
+    pub fn set_theme(&mut self, config: &Config) {
+        self.theme = Theme::from_config(config);
     }
 
     pub fn build(
@@ -62,7 +81,7 @@ impl Layout {
         self.bg.clear();
 
         let colors = content.colors;
-        let window_bg = to_linear(theme::BACKGROUND);
+        let window_bg = to_linear(self.theme.background);
         let cursor_point = content.cursor.point;
         let display_offset = content.display_offset as i32;
 
@@ -85,8 +104,8 @@ impl Layout {
                 .is_some_and(|s| s.contains_cell(&item, cursor_point, content.cursor.shape));
 
             let (mut fg, mut bg) = (
-                resolve(cell.fg, colors, true),
-                resolve(cell.bg, colors, false),
+                resolve(cell.fg, colors, &self.theme),
+                resolve(cell.bg, colors, &self.theme),
             );
 
             if inverse ^ at_cursor ^ selected {
@@ -109,7 +128,7 @@ impl Layout {
                 color: fg,
                 offset: [col, row],
                 cell: cache.get_or_insert(cell.c),
-                gamma: gamma(fg, bg),
+                gamma: gamma(fg, bg, self.theme.gamma_strength),
             });
         }
 
@@ -149,7 +168,7 @@ impl Layout {
         };
 
         self.bg.push(BgRect {
-            color: to_linear(theme::CURSOR),
+            color: to_linear(self.theme.cursor),
             offset: [point.column.0 as f32, point.line.0 as f32 + y_offset],
             size,
         });
@@ -158,8 +177,8 @@ impl Layout {
     fn push_hollow_cursor(&mut self, point: Point) {
         let col = point.column.0 as f32;
         let row = point.line.0 as f32;
-        let color = to_linear(theme::CURSOR);
-        let t = HOLLOW_CURSOR_THICKNESS;
+        let color = to_linear(self.theme.cursor);
+        let t = self.theme.hollow_cursor_thickness;
 
         let edges = [
             ([col, row], [1.0, t]),
@@ -178,25 +197,23 @@ impl Layout {
     }
 }
 
-fn resolve(color: Color, colors: &Colors, is_fg: bool) -> [f32; 4] {
+fn resolve(color: Color, colors: &Colors, theme: &Theme) -> [f32; 4] {
     let rgb = match color {
         Color::Spec(rgb) => [rgb.r, rgb.g, rgb.b],
         Color::Indexed(i) => match colors[i as usize] {
             Some(rgb) => [rgb.r, rgb.g, rgb.b],
-            None => theme::indexed(i),
+            None => indexed(i, &theme.palette),
         },
         Color::Named(named) => match named {
-            NamedColor::Foreground => theme::FOREGROUND,
-            NamedColor::Background => theme::BACKGROUND,
-            NamedColor::Cursor => theme::CURSOR,
+            NamedColor::Foreground => theme.foreground,
+            NamedColor::Background => theme.background,
+            NamedColor::Cursor => theme.cursor,
             other => match colors[other as usize] {
                 Some(rgb) => [rgb.r, rgb.g, rgb.b],
-                None => theme::indexed(other as u8),
+                None => indexed(other as u8, &theme.palette),
             },
         },
     };
-
-    let _ = is_fg;
 
     to_linear(rgb)
 }
@@ -214,6 +231,6 @@ fn luminance(c: [f32; 4]) -> f32 {
     0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
 }
 
-fn gamma(fg: [f32; 4], bg: [f32; 4]) -> f32 {
-    1.0 + GAMMA_STRENGTH * (luminance(fg) - luminance(bg))
+fn gamma(fg: [f32; 4], bg: [f32; 4], gamma_strength: f32) -> f32 {
+    1.0 + gamma_strength * (luminance(fg) - luminance(bg))
 }
