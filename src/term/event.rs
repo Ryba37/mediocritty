@@ -1,10 +1,23 @@
-use alacritty_terminal::event::{Event, EventListener};
+use alacritty_terminal::{
+    event::{Event, EventListener},
+    term::ClipboardType,
+};
+use std::sync::Arc;
 use winit::event_loop::EventLoopProxy;
 
+#[allow(
+    dead_code,
+    reason = "used once the linux backend distinguishes primary selection"
+)]
 pub enum UserEvent {
     Wakeup,
     Exit,
     Title(String),
+    ClipboardStore(ClipboardType, String),
+    ClipboardLoad(
+        ClipboardType,
+        Arc<dyn Fn(&str) -> String + Sync + Send + 'static>,
+    ),
 }
 
 #[derive(Clone)]
@@ -16,6 +29,9 @@ impl EventListener for EventProxy {
             Event::Wakeup => UserEvent::Wakeup,
             Event::Exit | Event::ChildExit(_) => UserEvent::Exit,
             Event::Title(s) => UserEvent::Title(s),
+            Event::ClipboardStore(ty, text) => UserEvent::ClipboardStore(ty, text),
+            Event::ClipboardLoad(ty, formatter) => UserEvent::ClipboardLoad(ty, formatter),
+
             _ => return,
         };
 

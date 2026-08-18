@@ -3,6 +3,7 @@ use winit::event_loop::{ControlFlow, EventLoop};
 use crate::term::UserEvent;
 
 mod app;
+mod clipboard;
 mod color;
 mod font;
 mod gpu;

@@ -5,7 +5,9 @@ use alacritty_terminal::{
     Term,
     event::{Notify, OnResize, WindowSize},
     event_loop::{EventLoop, Msg, Notifier, State},
-    grid::Scroll,
+    grid::{Dimensions, Scroll},
+    index::{Point, Side},
+    selection::Selection,
     sync::FairMutex,
     term::{Config, TermMode},
     tty::{self, Pty},
@@ -70,20 +72,42 @@ impl Terminal {
         *self.term().lock().mode()
     }
 
+    pub fn scroll(&mut self, delta: i32) {
+        if delta == 0 {
+            return;
+        }
+
+        self.term.lock().scroll_display(Scroll::Delta(delta));
+    }
+
+    pub fn display_offset(&self) -> usize {
+        self.term.lock().grid().display_offset()
+    }
+
+    pub fn columns(&self) -> usize {
+        self.term.lock().columns()
+    }
+
+    pub fn start_selection(&mut self, selection: Selection) {
+        self.term.lock().selection = Some(selection);
+    }
+
+    pub fn update_selection(&mut self, point: Point, side: Side) {
+        if let Some(selection) = self.term.lock().selection.as_mut() {
+            selection.update(point, side);
+        }
+    }
+
+    pub fn selection_text(&self) -> Option<String> {
+        self.term.lock().selection_to_string()
+    }
+
     pub fn shutdown(&mut self) {
         let _ = self.notifier.0.send(Msg::Shutdown);
 
         if let Some(thread) = self.io_thread.take() {
             let _ = thread.join();
         }
-    }
-
-    pub fn scroll(&mut self, delta: i32) {
-        if delta == 0 {
-            return;
-        }
-
-        self.term().lock().scroll_display(Scroll::Delta(delta));
     }
 
     pub fn resize(&mut self, cols: usize, rows: usize, cell_width: u16, cell_height: u16) {

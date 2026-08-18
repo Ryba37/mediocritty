@@ -71,13 +71,17 @@ impl Layout {
 
             let inverse = cell.flags.contains(Flags::INVERSE);
             let at_cursor = block_cursor && item.point == cursor_point;
+            let selected = content
+                .selection
+                .as_ref()
+                .is_some_and(|s| s.contains_cell(&item, cursor_point, content.cursor.shape));
 
             let (mut fg, mut bg) = (
                 resolve(cell.fg, colors, true),
                 resolve(cell.bg, colors, false),
             );
 
-            if inverse != at_cursor {
+            if inverse ^ at_cursor ^ selected {
                 std::mem::swap(&mut fg, &mut bg);
             }
 
