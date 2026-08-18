@@ -2,6 +2,7 @@ use std::time::{Duration, Instant};
 
 use alacritty_terminal::index::Point;
 use alacritty_terminal::selection::{Selection, SelectionType};
+use alacritty_terminal::term::TermMode;
 use winit::application::ApplicationHandler;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{ElementState, MouseButton, WindowEvent};
@@ -33,6 +34,7 @@ pub struct App {
     mouse_left_down: bool,
     last_click: Option<(Instant, Point)>,
     click_count: u8,
+    focused: bool,
 }
 
 impl App {
@@ -52,6 +54,7 @@ impl App {
             mouse_left_down: false,
             last_click: None,
             click_count: 0,
+            focused: true,
         }
     }
 
@@ -80,7 +83,7 @@ impl App {
         };
 
         let term = terminal.term().lock();
-        let frame = layout.build(term.renderable_content(), cache);
+        let frame = layout.build(term.renderable_content(), cache, self.focused);
 
         renderer.render(&frame, cache.atlas_mut());
     }
@@ -303,6 +306,26 @@ impl ApplicationHandler<UserEvent> for App {
                     terminal.start_selection(Selection::new(selection_type, point, side));
                     window.request_redraw();
                 }
+            }
+            WindowEvent::Focused(focused) => {
+                self.focused = focused;
+
+                if let Some(terminal) = &self.terminal {
+                    let mut term = terminal.term().lock();
+                    term.is_focused = focused;
+                    let report = term.mode().contains(TermMode::FOCUS_IN_OUT);
+                    drop(term);
+
+                    if report {
+                        terminal.write(if focused {
+                            b"\x1b[I".to_vec()
+                        } else {
+                            b"\x1b[O".to_vec()
+                        });
+                    }
+                }
+
+                window.request_redraw();
             }
             _ => (),
         }

@@ -1,3 +1,4 @@
+use alacritty_terminal::index::Point;
 use alacritty_terminal::term::RenderableContent;
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::color::Colors;
@@ -8,6 +9,7 @@ use crate::font::FontCache;
 use crate::theme;
 
 const GAMMA_STRENGTH: f32 = 0.2;
+const HOLLOW_CURSOR_THICKNESS: f32 = 0.08;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -50,7 +52,12 @@ impl Layout {
         }
     }
 
-    pub fn build(&mut self, content: RenderableContent, cache: &mut FontCache) -> Frame<'_> {
+    pub fn build(
+        &mut self,
+        content: RenderableContent,
+        cache: &mut FontCache,
+        focused: bool,
+    ) -> Frame<'_> {
         self.glyphs.clear();
         self.bg.clear();
 
@@ -63,6 +70,7 @@ impl Layout {
             content.cursor.shape,
             CursorShape::Block | CursorShape::HollowBlock
         );
+        let hollow_cursor = block_cursor && !focused;
 
         for item in content.display_iter {
             let cell = item.cell;
@@ -70,7 +78,7 @@ impl Layout {
             let row = (item.point.line.0 + display_offset) as f32;
 
             let inverse = cell.flags.contains(Flags::INVERSE);
-            let at_cursor = block_cursor && item.point == cursor_point;
+            let at_cursor = block_cursor && !hollow_cursor && item.point == cursor_point;
             let selected = content
                 .selection
                 .as_ref()
@@ -106,7 +114,12 @@ impl Layout {
         }
 
         if display_offset == 0 {
-            self.push_cursor(content.cursor.shape, cursor_point);
+            let shape = if hollow_cursor {
+                CursorShape::HollowBlock
+            } else {
+                content.cursor.shape
+            };
+            self.push_cursor(shape, cursor_point);
         }
 
         Frame {
@@ -115,12 +128,18 @@ impl Layout {
         }
     }
 
-    fn push_cursor(&mut self, shape: CursorShape, point: alacritty_terminal::index::Point) {
+    fn push_cursor(&mut self, shape: CursorShape, point: Point) {
+        if shape == CursorShape::HollowBlock {
+            self.push_hollow_cursor(point);
+            return;
+        }
+
         let size = match shape {
-            CursorShape::Block | CursorShape::HollowBlock => return,
+            CursorShape::Block => return,
             CursorShape::Underline => [1.0, 0.15],
             CursorShape::Beam => [0.15, 1.0],
             CursorShape::Hidden => return,
+            CursorShape::HollowBlock => unreachable!(),
         };
 
         let y_offset = if shape == CursorShape::Underline {
@@ -134,6 +153,28 @@ impl Layout {
             offset: [point.column.0 as f32, point.line.0 as f32 + y_offset],
             size,
         });
+    }
+
+    fn push_hollow_cursor(&mut self, point: Point) {
+        let col = point.column.0 as f32;
+        let row = point.line.0 as f32;
+        let color = to_linear(theme::CURSOR);
+        let t = HOLLOW_CURSOR_THICKNESS;
+
+        let edges = [
+            ([col, row], [1.0, t]),
+            ([col, row + 1.0 - t], [1.0, t]),
+            ([col, row], [t, 1.0]),
+            ([col + 1.0 - t, row], [t, 1.0]),
+        ];
+
+        for (offset, size) in edges {
+            self.bg.push(BgRect {
+                color,
+                offset,
+                size,
+            });
+        }
     }
 }
 
