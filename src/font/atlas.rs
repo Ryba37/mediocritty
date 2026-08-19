@@ -5,6 +5,11 @@ use crate::font::Bitmap;
 const INITIAL_COLS: u32 = 16;
 const INITIAL_ROWS: u32 = 16;
 
+// bit 31 of a returned/stored cell index marks a wide (2-slot) glyph;
+// GlyphInstance::cell in layout.rs carries this bit straight through to
+// the shader, which decodes it to size the quad and UV rect.
+pub const WIDE_BIT: u32 = 1 << 31;
+
 pub struct Atlas {
     data: Vec<u8>,
     cell_width: u32,
@@ -53,21 +58,39 @@ impl Atlas {
         self.dirty.clear();
     }
 
-    pub fn insert_glyph(&mut self, bitmap: &Bitmap) -> u32 {
-        debug_assert!(bitmap.stride >= bitmap.width);
-        debug_assert!(bitmap.data.len() >= bitmap.stride * bitmap.height);
-
+    fn alloc(&mut self) -> u32 {
         if self.next >= self.cols * self.rows {
             self.grow();
         }
 
         let n = self.next;
+        self.next += 1;
+        n
+    }
+
+    // reserves two horizontally adjacent slots so their pixels are
+    // contiguous in memory, giving a wide glyph one 2*cell_width canvas.
+    fn alloc_wide(&mut self) -> u32 {
+        if self.next % self.cols == self.cols - 1 {
+            self.alloc(); // last column: waste it, pair can't fit
+        }
+
+        let n = self.alloc();
+        self.alloc();
+        n
+    }
+
+    fn write(&mut self, n: u32, cell_cols: u32, bitmap: &Bitmap) {
+        debug_assert!(bitmap.stride >= bitmap.width);
+        debug_assert!(bitmap.data.len() >= bitmap.stride * bitmap.height);
+
         let (x, y, _, _) = self.cell_rect(n);
         let x = x as usize;
         let y = y as usize;
         let stride = self.stride() as usize;
-        // fallback glyphs may overflow the cell so we clipping instead of panicing
-        let w = bitmap.width.min(self.cell_width as usize);
+        // coretext::fit already keeps every glyph inside its slot(s), this is
+        // just a safety net so a bad bitmap clips instead of panicking
+        let w = bitmap.width.min((self.cell_width * cell_cols) as usize);
         let h = bitmap.height.min(self.cell_height as usize);
 
         self.data
@@ -79,16 +102,30 @@ impl Atlas {
                 dst[x..x + w].copy_from_slice(&src[..w]);
             });
 
-        self.dirty.push(n);
-        self.next += 1;
+        for slot in n..n + cell_cols {
+            self.dirty.push(slot);
+        }
+    }
+
+    pub fn insert_glyph(&mut self, bitmap: &Bitmap) -> u32 {
+        let n = self.alloc();
+        self.write(n, 1, bitmap);
         n
     }
 
-    pub fn insert(&mut self, ch: char, bitmap: &Bitmap) -> u32 {
+    pub fn insert(&mut self, ch: char, bitmap: &Bitmap, wide: bool) -> u32 {
         debug_assert!(!self.map.contains_key(&ch));
-        let n = self.insert_glyph(bitmap);
-        self.map.insert(ch, n);
-        n
+
+        let tagged = if wide {
+            let slot = self.alloc_wide();
+            self.write(slot, 2, bitmap);
+            slot | WIDE_BIT
+        } else {
+            self.insert_glyph(bitmap)
+        };
+
+        self.map.insert(ch, tagged);
+        tagged
     }
 
     pub fn take_dirty(&mut self) -> Vec<u32> {

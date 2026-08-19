@@ -16,7 +16,7 @@ impl FontCache {
         let metrics = primary.metrics()?;
 
         let mut atlas = Atlas::new(metrics.cell_width, metrics.cell_height);
-        let notdef = primary.rasterize_glyph(TOFU, metrics)?;
+        let notdef = primary.rasterize_glyph(TOFU, metrics, false)?;
         let n = atlas.insert_glyph(&notdef);
         debug_assert_eq!(n, NOTDEF_CELL);
 
@@ -27,14 +27,14 @@ impl FontCache {
         })
     }
 
-    pub fn get_or_insert(&mut self, ch: char) -> u32 {
+    pub fn get_or_insert(&mut self, ch: char, wide: bool) -> u32 {
         if let Some(n) = self.atlas.lookup(ch) {
             return n;
         }
 
         for font in &self.fonts {
-            if let Ok(bitmap) = font.rasterize(ch, self.metrics) {
-                return self.atlas.insert(ch, &bitmap);
+            if let Ok(bitmap) = font.rasterize(ch, self.metrics, wide) {
+                return self.atlas.insert(ch, &bitmap, wide);
             }
         }
 

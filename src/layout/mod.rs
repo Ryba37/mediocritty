@@ -35,6 +35,7 @@ impl Theme {
 pub struct GlyphInstance {
     pub color: [f32; 4],
     pub offset: [f32; 2],
+    // may carry font::WIDE_BIT in the top bit — see atlas.rs
     pub cell: u32,
     pub gamma: f32,
 }
@@ -93,6 +94,15 @@ impl Layout {
 
         for item in content.display_iter {
             let cell = item.cell;
+
+            if cell
+                .flags
+                .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
+            {
+                continue;
+            }
+
+            let wide = cell.flags.contains(Flags::WIDE_CHAR);
             let col = item.point.column.0 as f32;
             let row = (item.point.line.0 + display_offset) as f32;
 
@@ -112,11 +122,13 @@ impl Layout {
                 std::mem::swap(&mut fg, &mut bg);
             }
 
+            let width = if wide { 2.0 } else { 1.0 };
+
             if bg != window_bg {
                 self.bg.push(BgRect {
                     color: bg,
                     offset: [col, row],
-                    size: [1.0, 1.0],
+                    size: [width, 1.0],
                 });
             }
 
@@ -127,7 +139,7 @@ impl Layout {
             self.glyphs.push(GlyphInstance {
                 color: fg,
                 offset: [col, row],
-                cell: cache.get_or_insert(cell.c),
+                cell: cache.get_or_insert(cell.c, wide),
                 gamma: gamma(fg, bg, self.theme.gamma_strength),
             });
         }

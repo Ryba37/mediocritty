@@ -23,6 +23,8 @@ struct GlyphInstance {
     float gamma;
 };
 
+constant uint WIDE_BIT = 1u << 31;
+
 vertex VsOut vs_main(uint vid [[vertex_id]],
                      uint iid [[instance_id]],
                      constant float2* positions [[buffer(0)]],
@@ -31,14 +33,17 @@ vertex VsOut vs_main(uint vid [[vertex_id]],
     VsOut out;
 
     GlyphInstance inst = instances[iid];
+    bool wide = (inst.cell & WIDE_BIT) != 0;
+    uint cell = inst.cell & ~WIDE_BIT;
+    float2 scale = wide ? float2(2.0, 1.0) : float2(1.0, 1.0);
 
-    float2 px = (inst.offset + positions[vid]) * u.cell;
+    float2 px = (inst.offset + positions[vid] * scale) * u.cell;
     float2 ndc = px / u.screen * 2 - 1;
 
-    float2 origin = float2(inst.cell % u.cols, inst.cell / u.cols) * u.cell;
+    float2 origin = float2(cell % u.cols, cell / u.cols) * u.cell;
 
     out.position = float4(ndc.x, -ndc.y, 0.0, 1.0);
-    out.uv = (origin + positions[vid] * u.cell) / u.atlas;
+    out.uv = (origin + positions[vid] * u.cell * scale) / u.atlas;
     out.color = inst.color;
     out.gamma = inst.gamma;
     return out;
@@ -50,3 +55,4 @@ fragment float4 fs_main(VsOut in [[stage_in]],
     float coverage = pow(atlas.sample(samp, in.uv).r, in.gamma);
     return float4(in.color.rgb, in.color.a * coverage);
 }
+

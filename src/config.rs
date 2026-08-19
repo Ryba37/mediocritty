@@ -153,7 +153,11 @@ impl Config {
 
 #[cfg(target_os = "macos")]
 fn default_fallback() -> Vec<String> {
-    vec!["Apple Color Emoji".into(), "Apple Symbols".into()]
+    vec![
+        "Apple Color Emoji".into(),
+        "Apple Symbols".into(),
+        "Hiragino Sans".into(),
+    ]
 }
 
 #[cfg(not(target_os = "macos"))]
