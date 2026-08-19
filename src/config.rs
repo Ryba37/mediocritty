@@ -40,7 +40,7 @@ impl Default for Font {
         Self {
             size: 14.0,
             family: "Menlo".into(),
-            fallback: vec!["Apple Color Emoji".into(), "Apple Symbols".into()],
+            fallback: default_fallback(),
             gamma_strength: 0.2,
         }
     }
@@ -149,4 +149,14 @@ impl Config {
             }
         });
     }
+}
+
+#[cfg(target_os = "macos")]
+fn default_fallback() -> Vec<String> {
+    vec!["Apple Color Emoji".into(), "Apple Symbols".into()]
+}
+
+#[cfg(not(target_os = "macos"))]
+fn default_fallback() -> Vec<String> {
+    Vec::new()
 }
