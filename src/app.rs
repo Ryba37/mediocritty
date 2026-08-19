@@ -124,16 +124,27 @@ impl App {
         window.request_redraw();
     }
 
+    fn build_fonts(config: &Config, scale: f64) -> Result<Vec<Font>, String> {
+        let size = config.font.size * scale;
+        let mut fonts = vec![Font::new(Some(&config.font.family), size)?];
+
+        for name in &config.font.fallback {
+            match Font::new(Some(name), size) {
+                Ok(font) => fonts.push(font),
+                Err(e) => eprintln!("fallback font {name}: {e}, skipping"),
+            }
+        }
+
+        Ok(fonts)
+    }
+
     fn build_graphics(
         window: &Window,
         config: &Config,
     ) -> Result<(Metrics, FontCache, gpu::Renderer), String> {
-        let font = Font::new(
-            Some(&config.font.family),
-            config.font.size * window.scale_factor(),
-        )?;
-        let metrics = font.metrics();
-        let cache = FontCache::new(font)?;
+        let fonts = Self::build_fonts(config, window.scale_factor())?;
+        let cache = FontCache::new(fonts)?;
+        let metrics = cache.metrics();
         let renderer =
             gpu::Renderer::new(window, metrics, cache.atlas(), config.theme.background.0)?;
 

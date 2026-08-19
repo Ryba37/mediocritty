@@ -31,6 +31,7 @@ impl Default for Theme {
 pub struct Font {
     pub size: f64,
     pub family: String,
+    pub fallback: Vec<String>,
     pub gamma_strength: f32,
 }
 
@@ -39,6 +40,7 @@ impl Default for Font {
         Self {
             size: 14.0,
             family: "Menlo".into(),
+            fallback: vec!["Apple Color Emoji".into(), "Apple Symbols".into()],
             gamma_strength: 0.2,
         }
     }

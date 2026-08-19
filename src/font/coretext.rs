@@ -11,12 +11,11 @@ use crate::font::{Bitmap, GlyphId, Metrics};
 
 pub struct Font {
     inner: CFRetained<CTFont>,
-    metrics: Metrics,
 }
 
 impl Font {
     pub fn new(name: Option<&str>, size: f64) -> Result<Self, String> {
-        match name {
+        let inner = match name {
             Some(name) => {
                 let desc = unsafe {
                     CTFontDescriptor::with_name_and_size(&CFString::from_str(name), size)
@@ -25,33 +24,25 @@ impl Font {
                 let matched = unsafe { desc.matching_font_descriptor(None) }
                     .ok_or_else(|| format!("font {name} not found"))?;
 
-                let inner =
-                    unsafe { CTFont::with_font_descriptor(&matched, size, std::ptr::null()) };
-
-                let metrics = Self::compute_metrics(&inner)?;
-
-                Ok(Self { inner, metrics })
+                unsafe { CTFont::with_font_descriptor(&matched, size, std::ptr::null()) }
             }
-            None => {
-                let inner = unsafe {
-                    CTFont::new_ui_font_for_language(CTFontUIFontType::UserFixedPitch, size, None)
-                }
-                .ok_or_else(|| "no monospace font found".to_string())?;
-
-                let metrics = Self::compute_metrics(&inner)?;
-
-                Ok(Self { inner, metrics })
+            None => unsafe {
+                CTFont::new_ui_font_for_language(CTFontUIFontType::UserFixedPitch, size, None)
             }
-        }
+            .ok_or_else(|| "no monospace font found".to_string())?,
+        };
+
+        Ok(Self { inner })
     }
 
-    pub fn metrics(&self) -> Metrics {
-        self.metrics
+    // only primary font needs this
+    pub fn metrics(&self) -> Result<Metrics, String> {
+        Self::compute_metrics(&self.inner)
     }
 
-    pub fn rasterize_glyph(&self, glyph: GlyphId) -> Result<Bitmap, String> {
-        let width = self.metrics.cell_width as usize;
-        let height = self.metrics.cell_height as usize;
+    pub fn rasterize_glyph(&self, glyph: GlyphId, target: Metrics) -> Result<Bitmap, String> {
+        let width = target.cell_width as usize;
+        let height = target.cell_height as usize;
 
         let space =
             CGColorSpace::new_device_gray().ok_or_else(|| "no gray color space".to_string())?;
@@ -69,7 +60,7 @@ impl Font {
         }
         .ok_or_else(|| "no bitmap context".to_string())?;
 
-        let descent = self.metrics.cell_height as f64 - self.metrics.ascent as f64;
+        let descent = target.cell_height as f64 - target.ascent as f64;
         let glyphs = [glyph];
         let positions = [CGPoint::new(0.0, descent)];
 
@@ -106,11 +97,11 @@ impl Font {
         })
     }
 
-    pub fn rasterize(&self, ch: char) -> Result<Bitmap, String> {
+    pub fn rasterize(&self, ch: char, target: Metrics) -> Result<Bitmap, String> {
         let glyph =
             Self::glyph_for(&self.inner, ch).ok_or_else(|| format!("glyph {ch} not found"))?;
 
-        self.rasterize_glyph(glyph)
+        self.rasterize_glyph(glyph, target)
     }
 
     fn compute_metrics(inner: &CFRetained<CTFont>) -> Result<Metrics, String> {
