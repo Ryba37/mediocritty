@@ -34,7 +34,9 @@ pub struct Font {
     pub size: f64,
     pub family: String,
     pub fallback: Vec<String>,
-    pub gamma_strength: f32,
+    pub gamma: f32,
+    pub contrast: f32,
+    pub bold_is_bright: bool,
 }
 
 impl Default for Font {
@@ -43,7 +45,9 @@ impl Default for Font {
             size: 14.0,
             family: "Menlo".into(),
             fallback: default_fallback(),
-            gamma_strength: 0.2,
+            gamma: 1.7,
+            contrast: 30.0,
+            bold_is_bright: false,
         }
     }
 }

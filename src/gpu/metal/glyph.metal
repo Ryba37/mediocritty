@@ -5,7 +5,7 @@ struct VsOut {
     float4 position [[position]];
     float4 color;
     float2 uv;
-    float gamma;
+    float gamma_mix;
 };
 
 struct Uniforms {
@@ -14,13 +14,15 @@ struct Uniforms {
     float2 atlas;
     uint cols;
     uint pad;
+    float gamma;
+    float contrast;
 };
 
 struct GlyphInstance {
     float4 color;
     float2 offset;
     uint cell;
-    float gamma;
+    float gamma_mix;
 };
 
 constant uint WIDE_BIT = 1u << 31;
@@ -45,14 +47,15 @@ vertex VsOut vs_main(uint vid [[vertex_id]],
     out.position = float4(ndc.x, -ndc.y, 0.0, 1.0);
     out.uv = (origin + positions[vid] * u.cell * scale) / u.atlas;
     out.color = inst.color;
-    out.gamma = inst.gamma;
+    out.gamma_mix = inst.gamma_mix;
     return out;
 }
 
 fragment float4 fs_main(VsOut in [[stage_in]],
                         texture2d<float> atlas [[texture(0)]],
-                        sampler samp [[sampler(0)]]) {
-    float coverage = pow(atlas.sample(samp, in.uv).r, in.gamma);
-    return float4(in.color.rgb, in.color.a * coverage);
+                        sampler samp [[sampler(0)]],
+                        constant Uniforms& u [[buffer(3)]]) {
+    float a = atlas.sample(samp, in.uv).r;
+    a = saturate(mix(a, pow(a, u.gamma), in.gamma_mix) * u.contrast);
+    return float4(in.color.rgb, in.color.a * a);
 }
-

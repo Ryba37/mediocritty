@@ -6,8 +6,7 @@ use objc2_core_graphics::{
     CGContext, CGGlyph, CGImageAlphaInfo,
 };
 use objc2_core_text::{
-    CTFont, CTFontCopyName, CTFontDescriptor, CTFontOrientation, CTFontSymbolicTraits,
-    CTFontUIFontType,
+    CTFont, CTFontDescriptor, CTFontOrientation, CTFontSymbolicTraits, CTFontUIFontType,
 };
 
 use crate::font::{Bitmap, GlyphId, Metrics};
@@ -69,7 +68,26 @@ impl Font {
         }
         .ok_or_else(|| "no bitmap context".to_string())?;
 
-        let descent = target.cell_height as f64 - target.ascent as f64;
+        // an opaque context turns on quartz font smoothing, which dilates the
+        // outlines before rasterizing. that is fake bold on top of whatever
+        // weight the face already has, and it hits real bold faces hardest,
+        // closing up counters. plain grayscale antialiasing only, please.
+        CGContext::set_should_antialias(Some(&ctx), true);
+        CGContext::set_allows_antialiasing(Some(&ctx), true);
+        CGContext::set_should_smooth_fonts(Some(&ctx), false);
+        CGContext::set_allows_font_smoothing(Some(&ctx), false);
+
+        // every glyph lands at its own atlas slot at integer coordinates, so
+        // there is nothing for subpixel placement to buy us - it only smears
+        // the stems across two columns
+        CGContext::set_allows_font_subpixel_positioning(Some(&ctx), false);
+        CGContext::set_should_subpixel_position_fonts(Some(&ctx), false);
+        CGContext::set_allows_font_subpixel_quantization(Some(&ctx), false);
+        CGContext::set_should_subpixel_quantize_fonts(Some(&ctx), false);
+
+        // rounded, because a fractional baseline blurs every single glyph in
+        // the atlas vertically
+        let descent = (target.cell_height as f64 - target.ascent as f64).round();
         let glyphs = [glyph];
 
         CGContext::set_gray_fill_color(Some(&ctx), 1.0, 1.0);
@@ -191,6 +209,10 @@ impl Font {
         ok.then_some(glyphs[0])
     }
 
+    pub fn postscript_name(&self) -> String {
+        unsafe { self.inner.post_script_name() }.to_string()
+    }
+
     pub fn style(&self, style: u8) -> Option<Self> {
         let traits = match style {
             0 => CTFontSymbolicTraits::empty(),
@@ -218,32 +240,49 @@ impl Font {
 // scale < 1 only when the glyph actually sticks out; such glyphs get centered
 // in the box, everything else keeps its natural bearing and baseline and is
 // only clamped so nothing gets cut off by the atlas
-fn fit(ink: CGRect, w: f64, h: f64, descent: f64) -> (f64, CGPoint) {
+fn fit(ink: CGRect, w: f64, h: f64, baseline: f64) -> (f64, CGPoint) {
     let (iw, ih) = (ink.size.width, ink.size.height);
 
     // blank or degenerate glyph, nothing to fit
     if !(iw > 0.0 && ih > 0.0) {
-        return (1.0, CGPoint::new(0.0, descent));
+        return (1.0, CGPoint::new(0.0, baseline));
     }
 
     let scale = (w / iw).min(h / ih).min(1.0);
-    let (sw, sh) = (iw * scale, ih * scale);
 
     // a glyph that had to be shrunk is an icon, not text, so center it in the
-    // box on both axes. anything that fits as-is keeps its bearing and its
-    // baseline, just clamped so it cannot poke out of the slot
-    let (left, bottom) = if scale < 1.0 {
-        ((w - sw) * 0.5, (h - sh) * 0.5)
-    } else {
-        (
-            ink.origin.x.clamp(0.0, w - iw),
-            (descent + ink.origin.y).clamp(0.0, h - ih),
-        )
-    };
+    // box on both axes. draw_glyphs takes the baseline origin, so undo the ink
+    // offset and the ctm
+    if scale < 1.0 {
+        let (sw, sh) = (iw * scale, ih * scale);
 
-    // draw_glyphs takes the baseline origin, so undo the ink offset and the ctm
+        return (
+            scale,
+            CGPoint::new(
+                (w - sw) * 0.5 / scale - ink.origin.x,
+                (h - sh) * 0.5 / scale - ink.origin.y,
+            ),
+        );
+    }
+
+    // text keeps its bearing and its baseline. the pen range is whatever keeps
+    // the ink inside the slot; snapping it to whole pixels puts the outline on
+    // the sample grid instead of halfway across it, which is the difference
+    // between crisp stems and smeared ones
+    let (lo_x, hi_x) = pen_range(ink.origin.x, w - iw);
+    let (lo_y, hi_y) = pen_range(ink.origin.y, h - ih);
+
     (
-        scale,
-        CGPoint::new(left / scale - ink.origin.x, bottom / scale - ink.origin.y),
+        1.0,
+        CGPoint::new(0.0_f64.clamp(lo_x, hi_x), baseline.clamp(lo_y, hi_y)),
     )
+}
+
+// whole-pixel bounds for the pen on one axis, given the ink's bearing and how
+// much room the slot has to spare
+fn pen_range(bearing: f64, slack: f64) -> (f64, f64) {
+    let lo = (-bearing).ceil();
+    let hi = (slack - bearing).floor();
+
+    (lo, hi.max(lo))
 }

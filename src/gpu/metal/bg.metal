@@ -12,6 +12,8 @@ struct Uniforms {
     float2 atlas;
     uint cols;
     uint pad;
+    float gamma;
+    float contrast;
 };
 
 struct BgRect {

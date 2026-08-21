@@ -145,8 +145,7 @@ impl App {
         let fonts = Self::build_fonts(config, window.scale_factor())?;
         let cache = FontCache::new(fonts)?;
         let metrics = cache.metrics();
-        let renderer =
-            gpu::Renderer::new(window, metrics, cache.atlas(), config.theme.background.0)?;
+        let renderer = gpu::Renderer::new(window, metrics, cache.atlas(), config)?;
 
         Ok((metrics, cache, renderer))
     }

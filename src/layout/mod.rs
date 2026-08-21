@@ -15,7 +15,7 @@ struct Theme {
     palette: [[u8; 3]; 16],
     dim_strength: f32,
     hollow_cursor_thickness: f32,
-    gamma_strength: f32,
+    bold_is_bright: bool,
 }
 
 impl Theme {
@@ -29,7 +29,7 @@ impl Theme {
             palette,
             dim_strength: config.theme.dim_strength,
             hollow_cursor_thickness: config.cursor.hollow_cursor_thickness,
-            gamma_strength: config.font.gamma_strength,
+            bold_is_bright: config.font.bold_is_bright,
         }
     }
 }
@@ -41,7 +41,9 @@ pub struct GlyphInstance {
     pub offset: [f32; 2],
     // may carry font::WIDE_BIT in the top bit - see atlas.rs
     pub cell: u32,
-    pub gamma: f32,
+    // how much of the gamma curve the fragment shader should apply to this
+    // glyph's coverage, 0 for white on black, 1 for black on white
+    pub gamma_mix: f32,
 }
 
 #[repr(C)]
@@ -121,8 +123,10 @@ impl Layout {
             let dim = cell.flags.contains(Flags::DIM);
             let italic = cell.flags.contains(Flags::ITALIC);
 
+            let bright = bold && self.theme.bold_is_bright;
+
             let (mut fg, mut bg) = (
-                resolve(cell.fg, colors, &self.theme, bold, dim),
+                resolve(cell.fg, colors, &self.theme, bright, dim),
                 resolve(cell.bg, colors, &self.theme, false, false),
             );
 
@@ -155,7 +159,7 @@ impl Layout {
                 color: fg,
                 offset: [col, row],
                 cell: cache.get_or_insert(cell.c, wide, style),
-                gamma: gamma(fg, bg, self.theme.gamma_strength),
+                gamma_mix: gamma_mix(fg, bg),
             });
         }
 
@@ -224,11 +228,11 @@ impl Layout {
     }
 }
 
-fn resolve(color: Color, colors: &Colors, theme: &Theme, is_bold: bool, is_dim: bool) -> [f32; 4] {
+fn resolve(color: Color, colors: &Colors, theme: &Theme, is_bright: bool, is_dim: bool) -> [f32; 4] {
     let (rgb, is_dimmed) = match color {
         Color::Spec(rgb) => ([rgb.r, rgb.g, rgb.b], false),
         Color::Indexed(i) => {
-            let (idx, use_dim) = resolve_index(i, is_bold, is_dim);
+            let (idx, use_dim) = resolve_index(i, is_bright, is_dim);
 
             match colors[idx as usize] {
                 Some(rgb) => ([rgb.r, rgb.g, rgb.b], use_dim),
@@ -240,7 +244,7 @@ fn resolve(color: Color, colors: &Colors, theme: &Theme, is_bold: bool, is_dim: 
             NamedColor::Background => (theme.background, false),
             NamedColor::Cursor => (theme.cursor, false),
             other => {
-                let (idx, use_dim) = resolve_index(other as u8, is_bold, is_dim);
+                let (idx, use_dim) = resolve_index(other as u8, is_bright, is_dim);
 
                 match colors[idx as usize] {
                     Some(rgb) => ([rgb.r, rgb.g, rgb.b], use_dim),
@@ -272,15 +276,18 @@ fn luminance(c: [f32; 4]) -> f32 {
     0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
 }
 
-fn gamma(fg: [f32; 4], bg: [f32; 4], gamma_strength: f32) -> f32 {
-    1.0 + gamma_strength * (luminance(fg) - luminance(bg))
+// weight for the shader's gamma curve, following kitty's foreground_contrast:
+// the darker the text is relative to its background, the more curve it gets.
+// 0 is white on black, 1 is black on white. both colors are linear here
+fn gamma_mix(fg: [f32; 4], bg: [f32; 4]) -> f32 {
+    ((1.0 - luminance(fg) + luminance(bg)) * 0.5).clamp(0.0, 1.0)
 }
 
 fn dim(color: [u8; 3], dim_strength: f32) -> [u8; 3] {
     color.map(|c| (c as f32 * dim_strength) as u8)
 }
 
-fn resolve_index(color: u8, is_bold: bool, is_dim: bool) -> (u8, bool) {
+fn resolve_index(color: u8, is_bright: bool, is_dim: bool) -> (u8, bool) {
     if is_dim {
         if color >= 8 && color <= 15 {
             return (color - 8, true);
@@ -289,7 +296,7 @@ fn resolve_index(color: u8, is_bold: bool, is_dim: bool) -> (u8, bool) {
         return (color, false);
     }
 
-    if is_bold && color < 8 {
+    if is_bright && color < 8 {
         return (color + 8, false);
     }
 

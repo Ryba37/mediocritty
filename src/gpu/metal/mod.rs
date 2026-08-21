@@ -8,6 +8,7 @@ use winit::window::Window;
 
 use crate::{
     color::srgb_to_linear,
+    config::Config,
     font::{Atlas, Metrics},
     layout::Frame,
 };
@@ -37,7 +38,7 @@ impl MetalCtx {
         window: &Window,
         metrics: Metrics,
         atlas: &Atlas,
-        background: [u8; 3],
+        config: &Config,
     ) -> Result<Self, String> {
         let context = Context::new(window)?;
         let glyph_pipeline = pipeline::glyph(context.device())?;
@@ -50,6 +51,8 @@ impl MetalCtx {
             atlas: [atlas.stride() as f32, atlas.height() as f32],
             cols: atlas.cols(),
             pad: 0,
+            gamma: config.font.gamma.max(0.01),
+            contrast: 1.0 + config.font.contrast.clamp(0.0, 100.0) * 0.01,
         };
 
         let buffers = Buffers::new(context.device(), uniforms)?;
@@ -61,7 +64,7 @@ impl MetalCtx {
             bg_pipeline,
             buffers,
             atlas_texture,
-            background: linear_background(background),
+            background: linear_background(config.theme.background.0),
         })
     }
 

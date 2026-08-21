@@ -27,6 +27,8 @@ pub struct Uniforms {
     pub atlas: [f32; 2],
     pub cols: u32,
     pub pad: u32,
+    pub gamma: f32,
+    pub contrast: f32,
 }
 
 struct InstanceBuffer {
@@ -127,6 +129,8 @@ impl Buffers {
         unsafe {
             encoder.setVertexBuffer_offset_atIndex(Some(&self.vertex), 0, 0);
             encoder.setVertexBuffer_offset_atIndex(Some(&self.uniform), 0, 3);
+            // the glyph shader reads gamma/contrast in the fragment stage
+            encoder.setFragmentBuffer_offset_atIndex(Some(&self.uniform), 0, 3);
         }
     }
 
