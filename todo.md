@@ -3,7 +3,6 @@
 - fix emoji's
 - fix scaling when ScaleFactorChanged
 - fix zoom in macos
-- fallback fonts
-- do docs
 - add mouse support
-- fix \n
+- fix \n while pasting text into terminal
+- fix pasting for "printf '\e[2mdefault dim\e[0m default\n'" like strings in nvim

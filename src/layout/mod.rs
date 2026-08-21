@@ -13,17 +13,21 @@ struct Theme {
     foreground: [u8; 3],
     cursor: [u8; 3],
     palette: [[u8; 3]; 16],
+    dim_strength: f32,
     hollow_cursor_thickness: f32,
     gamma_strength: f32,
 }
 
 impl Theme {
     fn from_config(config: &Config) -> Self {
+        let palette = config.theme.palette.to_array();
+
         Self {
             background: config.theme.background.0,
             foreground: config.theme.foreground.0,
             cursor: config.theme.cursor.0,
-            palette: config.theme.palette.to_array(),
+            palette,
+            dim_strength: config.theme.dim_strength,
             hollow_cursor_thickness: config.cursor.hollow_cursor_thickness,
             gamma_strength: config.font.gamma_strength,
         }
@@ -35,7 +39,7 @@ impl Theme {
 pub struct GlyphInstance {
     pub color: [f32; 4],
     pub offset: [f32; 2],
-    // may carry font::WIDE_BIT in the top bit — see atlas.rs
+    // may carry font::WIDE_BIT in the top bit - see atlas.rs
     pub cell: u32,
     pub gamma: f32,
 }
@@ -113,9 +117,13 @@ impl Layout {
                 .as_ref()
                 .is_some_and(|s| s.contains_cell(&item, cursor_point, content.cursor.shape));
 
+            let bold = cell.flags.contains(Flags::BOLD);
+            let dim = cell.flags.contains(Flags::DIM);
+            let italic = cell.flags.contains(Flags::ITALIC);
+
             let (mut fg, mut bg) = (
-                resolve(cell.fg, colors, &self.theme),
-                resolve(cell.bg, colors, &self.theme),
+                resolve(cell.fg, colors, &self.theme, bold, dim),
+                resolve(cell.bg, colors, &self.theme, false, false),
             );
 
             if inverse ^ at_cursor ^ selected {
@@ -136,10 +144,17 @@ impl Layout {
                 continue;
             }
 
+            let style = match (bold, italic) {
+                (false, false) => 0,
+                (true, false) => 1,
+                (false, true) => 2,
+                (true, true) => 3,
+            };
+
             self.glyphs.push(GlyphInstance {
                 color: fg,
                 offset: [col, row],
-                cell: cache.get_or_insert(cell.c, wide),
+                cell: cache.get_or_insert(cell.c, wide, style),
                 gamma: gamma(fg, bg, self.theme.gamma_strength),
             });
         }
@@ -209,22 +224,36 @@ impl Layout {
     }
 }
 
-fn resolve(color: Color, colors: &Colors, theme: &Theme) -> [f32; 4] {
-    let rgb = match color {
-        Color::Spec(rgb) => [rgb.r, rgb.g, rgb.b],
-        Color::Indexed(i) => match colors[i as usize] {
-            Some(rgb) => [rgb.r, rgb.g, rgb.b],
-            None => indexed(i, &theme.palette),
-        },
+fn resolve(color: Color, colors: &Colors, theme: &Theme, is_bold: bool, is_dim: bool) -> [f32; 4] {
+    let (rgb, is_dimmed) = match color {
+        Color::Spec(rgb) => ([rgb.r, rgb.g, rgb.b], false),
+        Color::Indexed(i) => {
+            let (idx, use_dim) = resolve_index(i, is_bold, is_dim);
+
+            match colors[idx as usize] {
+                Some(rgb) => ([rgb.r, rgb.g, rgb.b], use_dim),
+                None => (indexed(idx, &theme.palette), use_dim),
+            }
+        }
         Color::Named(named) => match named {
-            NamedColor::Foreground => theme.foreground,
-            NamedColor::Background => theme.background,
-            NamedColor::Cursor => theme.cursor,
-            other => match colors[other as usize] {
-                Some(rgb) => [rgb.r, rgb.g, rgb.b],
-                None => indexed(other as u8, &theme.palette),
-            },
+            NamedColor::Foreground => (theme.foreground, false),
+            NamedColor::Background => (theme.background, false),
+            NamedColor::Cursor => (theme.cursor, false),
+            other => {
+                let (idx, use_dim) = resolve_index(other as u8, is_bold, is_dim);
+
+                match colors[idx as usize] {
+                    Some(rgb) => ([rgb.r, rgb.g, rgb.b], use_dim),
+                    None => (indexed(idx, &theme.palette), use_dim),
+                }
+            }
         },
+    };
+
+    let rgb = if is_dim && !is_dimmed {
+        dim(rgb, theme.dim_strength)
+    } else {
+        rgb
     };
 
     to_linear(rgb)
@@ -245,4 +274,24 @@ fn luminance(c: [f32; 4]) -> f32 {
 
 fn gamma(fg: [f32; 4], bg: [f32; 4], gamma_strength: f32) -> f32 {
     1.0 + gamma_strength * (luminance(fg) - luminance(bg))
+}
+
+fn dim(color: [u8; 3], dim_strength: f32) -> [u8; 3] {
+    color.map(|c| (c as f32 * dim_strength) as u8)
+}
+
+fn resolve_index(color: u8, is_bold: bool, is_dim: bool) -> (u8, bool) {
+    if is_dim {
+        if color >= 8 && color <= 15 {
+            return (color - 8, true);
+        }
+
+        return (color, false);
+    }
+
+    if is_bold && color < 8 {
+        return (color + 8, false);
+    }
+
+    (color, false)
 }

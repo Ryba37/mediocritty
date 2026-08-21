@@ -5,10 +5,14 @@ use objc2_core_graphics::{
     CGBitmapContextCreate, CGBitmapContextGetBytesPerRow, CGBitmapContextGetData, CGColorSpace,
     CGContext, CGGlyph, CGImageAlphaInfo,
 };
-use objc2_core_text::{CTFont, CTFontDescriptor, CTFontOrientation, CTFontUIFontType};
+use objc2_core_text::{
+    CTFont, CTFontCopyName, CTFontDescriptor, CTFontOrientation, CTFontSymbolicTraits,
+    CTFontUIFontType,
+};
 
 use crate::font::{Bitmap, GlyphId, Metrics};
 
+#[derive(Clone)]
 pub struct Font {
     inner: CFRetained<CTFont>,
 }
@@ -185,6 +189,27 @@ impl Font {
         };
 
         ok.then_some(glyphs[0])
+    }
+
+    pub fn style(&self, style: u8) -> Option<Self> {
+        let traits = match style {
+            0 => CTFontSymbolicTraits::empty(),
+            1 => CTFontSymbolicTraits::BoldTrait,
+            2 => CTFontSymbolicTraits::ItalicTrait,
+            3 => CTFontSymbolicTraits::BoldTrait | CTFontSymbolicTraits::ItalicTrait,
+            _ => return None,
+        };
+
+        let inner = unsafe {
+            self.inner.copy_with_symbolic_traits(
+                0.0,
+                std::ptr::null(),
+                traits,
+                CTFontSymbolicTraits::BoldTrait | CTFontSymbolicTraits::ItalicTrait,
+            )
+        };
+
+        inner.map(|inner| Self { inner })
     }
 }
 

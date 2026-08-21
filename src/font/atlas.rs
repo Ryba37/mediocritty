@@ -5,6 +5,11 @@ use crate::font::Bitmap;
 const INITIAL_COLS: u32 = 16;
 const INITIAL_ROWS: u32 = 16;
 
+const CHAR_BITS: u32 = 21;
+
+const STYLE_BOLD: u8 = 1;
+const STYLE_ITALIC: u8 = 2;
+
 // bit 31 of a returned/stored cell index marks a wide (2-slot) glyph;
 // GlyphInstance::cell in layout.rs carries this bit straight through to
 // the shader, which decodes it to size the quad and UV rect.
@@ -16,7 +21,7 @@ pub struct Atlas {
     cell_height: u32,
     cols: u32,
     rows: u32,
-    map: HashMap<char, u32>,
+    map: HashMap<u32, u32>,
     next: u32,
     dirty: Vec<u32>,
     resized: bool,
@@ -113,8 +118,8 @@ impl Atlas {
         n
     }
 
-    pub fn insert(&mut self, ch: char, bitmap: &Bitmap, wide: bool) -> u32 {
-        debug_assert!(!self.map.contains_key(&ch));
+    pub fn insert(&mut self, key: u32, bitmap: &Bitmap, wide: bool) -> u32 {
+        debug_assert!(!self.map.contains_key(&key));
 
         let tagged = if wide {
             let slot = self.alloc_wide();
@@ -124,7 +129,7 @@ impl Atlas {
             self.insert_glyph(bitmap)
         };
 
-        self.map.insert(ch, tagged);
+        self.map.insert(key, tagged);
         tagged
     }
 
@@ -132,8 +137,8 @@ impl Atlas {
         std::mem::take(&mut self.dirty)
     }
 
-    pub fn lookup(&self, ch: char) -> Option<u32> {
-        self.map.get(&ch).copied()
+    pub fn lookup(&self, key: u32) -> Option<u32> {
+        self.map.get(&key).copied()
     }
 
     pub fn data(&self) -> &[u8] {
@@ -148,9 +153,9 @@ impl Atlas {
         std::mem::take(&mut self.resized)
     }
 
-    pub fn alias(&mut self, ch: char, cell: u32) {
+    pub fn alias(&mut self, key: u32, cell: u32) {
         debug_assert!(cell < self.next);
-        self.map.insert(ch, cell);
+        self.map.insert(key, cell);
     }
 
     pub fn cell_rect(&self, n: u32) -> (u32, u32, u32, u32) {
@@ -159,4 +164,8 @@ impl Atlas {
 
         (x, y, self.cell_width, self.cell_height)
     }
+}
+
+pub fn key(ch: char, style: u8) -> u32 {
+    ch as u32 | ((style as u32) << CHAR_BITS)
 }
