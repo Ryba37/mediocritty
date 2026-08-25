@@ -1,4 +1,4 @@
-use crate::font::{Atlas, Font, Metrics, atlas::key};
+use crate::font::{Atlas, Font, Metrics, atlas::key, boxdraw};
 
 const NOTDEF_CELL: u32 = 0;
 const TOFU: u16 = 0;
@@ -49,9 +49,18 @@ impl FontCache {
     }
 
     pub fn get_or_insert(&mut self, ch: char, wide: bool, style: u8) -> u32 {
+        let is_box = boxdraw::contains(ch);
+        let style = if is_box { 0 } else { style };
+
         let key = key(ch, style);
         if let Some(n) = self.atlas.lookup(key) {
             return n;
+        }
+
+        if is_box {
+            if let Some(b) = boxdraw::rasterize(ch, self.metrics) {
+                return self.atlas.insert(key, &b, false);
+            }
         }
 
         for font in &self.fonts[style as usize] {

@@ -6,3 +6,4 @@
 - add mouse support
 - fix \n while pasting text into terminal
 - fix pasting for "printf '\e[2mdefault dim\e[0m default\n'" like strings in nvim
+- refactor boxdraw.rs

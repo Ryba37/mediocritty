@@ -4,6 +4,7 @@ mod coretext;
 pub use coretext::Font;
 
 mod atlas;
+mod boxdraw;
 mod cache;
 
 pub use atlas::Atlas;

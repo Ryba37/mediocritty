@@ -7,9 +7,6 @@ const INITIAL_ROWS: u32 = 16;
 
 const CHAR_BITS: u32 = 21;
 
-const STYLE_BOLD: u8 = 1;
-const STYLE_ITALIC: u8 = 2;
-
 // bit 31 of a returned/stored cell index marks a wide (2-slot) glyph;
 // GlyphInstance::cell in layout.rs carries this bit straight through to
 // the shader, which decodes it to size the quad and UV rect.
