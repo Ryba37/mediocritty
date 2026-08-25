@@ -149,6 +149,31 @@ impl App {
 
         Ok((metrics, cache, renderer))
     }
+
+    fn paste(&mut self) {
+        let (Some(terminal), Some(clipboard)) = (&self.terminal, &mut self.clipboard) else {
+            return;
+        };
+
+        let Some(text) = clipboard.load() else {
+            return;
+        };
+
+        // enter is CR on a terminal, a raw LF only lands as a stray ^J
+        let text = text.replace("\r\n", "\r").replace('\n', "\r");
+
+        if terminal.mode().contains(TermMode::BRACKETED_PASTE) {
+            let mut out = Vec::with_capacity(text.len() + 12);
+            out.extend_from_slice(b"\x1b[200~");
+            // an ESC in the payload could close the block early and hand the rest
+            // of the paste to the shell as commands
+            out.extend(text.bytes().filter(|b| *b != 0x1b));
+            out.extend_from_slice(b"\x1b[201~");
+            terminal.write(out);
+        } else {
+            terminal.write(text.into_bytes());
+        }
+    }
 }
 
 impl ApplicationHandler<UserEvent> for App {
@@ -248,6 +273,7 @@ impl ApplicationHandler<UserEvent> for App {
             }
 
             WindowEvent::KeyboardInput { event, .. } => {
+                // remember to replace super key to ctrl + shift for linux
                 if event.state == ElementState::Pressed
                     && self.modifiers.super_key()
                     && let Key::Character(s) = &event.logical_key
@@ -263,12 +289,7 @@ impl ApplicationHandler<UserEvent> for App {
                             return;
                         }
                         "v" | "V" => {
-                            if let (Some(terminal), Some(clipboard)) =
-                                (&self.terminal, &mut self.clipboard)
-                                && let Some(text) = clipboard.load()
-                            {
-                                terminal.write(text.into_bytes());
-                            }
+                            self.paste();
                             return;
                         }
                         _ => {}
