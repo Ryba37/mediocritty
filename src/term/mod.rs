@@ -47,10 +47,11 @@ impl Terminal {
         let pty =
             tty::new(&tty::Options::default(), window_size, 0).map_err(|e| format!("pty: {e}"))?;
 
-        let event_loop = EventLoop::new(term.clone(), proxy, pty, false, false)
+        let event_loop = EventLoop::new(term.clone(), proxy.clone(), pty, false, false)
             .map_err(|e| format!("event loop: {e}"))?;
 
         let notifier = Notifier(event_loop.channel());
+        proxy.set_writer(Notifier(event_loop.channel()));
         let io_thread = event_loop.spawn();
 
         Ok(Self {
