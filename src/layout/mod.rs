@@ -39,7 +39,8 @@ impl Theme {
 pub struct GlyphInstance {
     pub color: [f32; 4],
     pub offset: [f32; 2],
-    // may carry font::WIDE_BIT in the top bit - see atlas.rs
+    // may carry font::WIDE_BIT and font::EXACT_BIT in the top bits - see
+    // atlas.rs
     pub cell: u32,
     // how much of the gamma curve the fragment shader should apply to this
     // glyph's coverage, 0 for white on black, 1 for black on white

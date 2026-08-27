@@ -6,6 +6,7 @@ struct VsOut {
     float4 color;
     float2 uv;
     float gamma_mix;
+    float contrast;
 };
 
 struct Uniforms {
@@ -29,6 +30,7 @@ struct GlyphInstance {
 };
 
 constant uint WIDE_BIT = 1u << 31;
+constant uint EXACT_BIT = 1u << 30;
 
 vertex VsOut vs_main(uint vid [[vertex_id]],
                      uint iid [[instance_id]],
@@ -39,7 +41,8 @@ vertex VsOut vs_main(uint vid [[vertex_id]],
 
     GlyphInstance inst = instances[iid];
     bool wide = (inst.cell & WIDE_BIT) != 0;
-    uint cell = inst.cell & ~WIDE_BIT;
+    bool exact = (inst.cell & EXACT_BIT) != 0;
+    uint cell = inst.cell & ~(WIDE_BIT | EXACT_BIT);
     float2 scale = wide ? float2(2.0, 1.0) : float2(1.0, 1.0);
 
     float2 px = (inst.offset + positions[vid] * scale) * u.cell;
@@ -50,7 +53,8 @@ vertex VsOut vs_main(uint vid [[vertex_id]],
     out.position = float4(ndc.x, -ndc.y, 0.0, 1.0);
     out.uv = (origin + positions[vid] * u.cell * scale) / u.atlas;
     out.color = inst.color;
-    out.gamma_mix = inst.gamma_mix;
+    out.gamma_mix = exact ? 0.0 : inst.gamma_mix;
+    out.contrast = exact ? 1.0 : u.contrast;
     return out;
 }
 
@@ -59,6 +63,6 @@ fragment float4 fs_main(VsOut in [[stage_in]],
                         sampler samp [[sampler(0)]],
                         constant Uniforms& u [[buffer(3)]]) {
     float a = atlas.sample(samp, in.uv).r;
-    a = saturate(mix(a, pow(a, u.gamma), in.gamma_mix) * u.contrast);
+    a = saturate(mix(a, pow(a, u.gamma), in.gamma_mix) * in.contrast);
     return float4(in.color.rgb, in.color.a * a);
 }

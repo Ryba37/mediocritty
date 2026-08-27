@@ -1,4 +1,8 @@
-use crate::font::{Atlas, Font, Metrics, atlas::key, boxdraw};
+use crate::font::{
+    Atlas, Font, Metrics,
+    atlas::{EXACT_BIT, key},
+    boxdraw,
+};
 
 const NOTDEF_CELL: u32 = 0;
 const TOFU: u16 = 0;
@@ -66,12 +70,16 @@ impl FontCache {
         let is_box = boxdraw::contains(ch);
         let style = if is_box { 0 } else { style };
 
+        // everything boxdraw draws is exact coverage, so it opts out of the
+        // shader's text gamma. the bit rides on the returned index only
+        let exact = if is_box { EXACT_BIT } else { 0 };
+
         let key = key(ch, style);
 
         // mask first: it holds everything except emoji, so the color map is
         // only touched on a miss
         if let Some(n) = self.atlas.lookup(key) {
-            return Glyph::Mask(n);
+            return Glyph::Mask(n | exact);
         }
 
         if let Some(n) = self.emoji.lookup(key) {
@@ -80,7 +88,7 @@ impl FontCache {
 
         if is_box {
             if let Some(b) = boxdraw::rasterize(ch, self.metrics) {
-                return Glyph::Mask(self.atlas.insert(key, &b, false));
+                return Glyph::Mask(self.atlas.insert(key, &b, false) | exact);
             }
         }
 

@@ -1,6 +1,6 @@
 use crate::font::{Bitmap, Metrics};
 
-const SS: usize = 4; // subpixel grid for arcs and diagonals
+const SS: usize = 8; // subpixel grid for arcs, diagonals and powerline
 
 const NONE: u8 = 0;
 const HEAVY: u8 = 2;
@@ -180,15 +180,10 @@ const ARMS: [u8; 0x80] = [
 
 #[inline]
 pub fn contains(ch: char) -> bool {
-    matches!(ch, '\u{2500}'..='\u{259F}')
+    matches!(ch, '\u{2500}'..='\u{259F}' | '\u{E0B0}'..='\u{E0BF}')
 }
 
 pub fn rasterize(ch: char, metrics: Metrics) -> Option<Bitmap> {
-    if !contains(ch) {
-        return None;
-    }
-
-    let i = ch as usize - 0x2500;
     let g = Geom::new(metrics);
     if g.cell_width == 0 || g.cell_height == 0 {
         return None;
@@ -196,11 +191,21 @@ pub fn rasterize(ch: char, metrics: Metrics) -> Option<Bitmap> {
 
     let mut bm = g.blank();
 
+    match ch {
+        '\u{2500}'..='\u{259F}' => drawing(&mut bm, &g, ch as usize - 0x2500),
+        '\u{E0B0}'..='\u{E0BF}' => powerline(&mut bm, &g, ch as usize - 0xE0B0),
+        _ => return None,
+    }
+
+    Some(bm)
+}
+
+fn drawing(bm: &mut Bitmap, g: &Geom, i: usize) {
     match i {
-        0x04..=0x0B | 0x4C..=0x4F => dashed(&mut bm, &g, i),
-        0x6D..=0x70 => arc(&mut bm, &g, i - 0x6D),
-        0x71..=0x73 => diagonal(&mut bm, &g, i - 0x71),
-        0x80..=0x9F => blocks(&mut bm, &g, i - 0x80),
+        0x04..=0x0B | 0x4C..=0x4F => dashed(bm, g, i),
+        0x6D..=0x70 => arc(bm, g, i - 0x6D),
+        0x71..=0x73 => diagonal(bm, g, i - 0x71),
+        0x80..=0x9F => blocks(bm, g, i - 0x80),
         _ => {
             let a = [
                 (ARMS[i] >> 6) & 3,
@@ -210,14 +215,12 @@ pub fn rasterize(ch: char, metrics: Metrics) -> Option<Bitmap> {
             ];
 
             if a.contains(&DOUBLE) {
-                double(&mut bm, &g, a);
+                double(bm, g, a);
             } else {
-                plain(&mut bm, &g, a);
+                plain(bm, g, a);
             }
         }
     }
-
-    Some(bm)
 }
 
 // arms overshoot the centre into the far edge of the perpendicular band, so a
@@ -400,60 +403,32 @@ fn arc(bm: &mut Bitmap, g: &Geom, k: usize) {
     }
 
     let (r0, r1) = ((r - half).max(0.0).powi(2), (r + half).powi(2));
-    let step = 1.0 / SS as f32;
 
-    for y in 0..h {
-        for x in 0..w {
-            let mut hits = 0;
-
-            for sy in 0..SS {
-                for sx in 0..SS {
-                    let px = x as f32 + (sx as f32 + 0.5) * step;
-                    let py = y as f32 + (sy as f32 + 0.5) * step;
-
-                    if (px > cx) == right || (py > cy) == down {
-                        continue;
-                    }
-
-                    let d = (px - cx).powi(2) + (py - cy).powi(2);
-                    hits += (d >= r0 && d <= r1) as usize;
-                }
-            }
-
-            blend(bm, x, y, hits);
+    shade(bm, g, |px, py| {
+        if (px > cx) == right || (py > cy) == down {
+            return false;
         }
-    }
+
+        let d = (px - cx).powi(2) + (py - cy).powi(2);
+        d >= r0 && d <= r1
+    });
 }
 
 fn diagonal(bm: &mut Bitmap, g: &Geom, k: usize) {
     let (w, h) = (g.cell_width as f32, g.cell_height as f32);
     // distances stay unnormalised, so the limit carries the segment length
     let lim = g.light as f32 / 2.0 * (w * w + h * h).sqrt();
-    let step = 1.0 / SS as f32;
 
-    for y in 0..g.cell_height {
-        for x in 0..g.cell_width {
-            let mut hits = 0;
+    shade(bm, g, |px, py| {
+        let down = (px * h - py * w).abs() <= lim;
+        let up = (px * h + py * w - w * h).abs() <= lim;
 
-            for sy in 0..SS {
-                for sx in 0..SS {
-                    let px = x as f32 + (sx as f32 + 0.5) * step;
-                    let py = y as f32 + (sy as f32 + 0.5) * step;
-
-                    let down = (px * h - py * w).abs() <= lim;
-                    let up = (px * h + py * w - w * h).abs() <= lim;
-
-                    hits += match k {
-                        0 => up,
-                        1 => down,
-                        _ => up || down,
-                    } as usize;
-                }
-            }
-
-            blend(bm, x, y, hits);
+        match k {
+            0 => up,
+            1 => down,
+            _ => up || down,
         }
-    }
+    });
 }
 
 // upper left, upper right, lower left, lower right
@@ -507,6 +482,92 @@ fn blocks(bm: &mut Bitmap, g: &Geom, i: usize) {
 // blocks in neighbouring cells lines up
 fn eighths(span: usize, n: usize) -> usize {
     (span * n + 4) / 8
+}
+
+// powerline separators, e0b0..e0bf. the font draws them on the em box, so the
+// rounded baseline leaves them a pixel off and a gap against the next cell.
+// here they are built on the cell itself and tile seamlessly
+fn powerline(bm: &mut Bitmap, g: &Geom, i: usize) {
+    let (w, h) = (g.cell_width as f32, g.cell_height as f32);
+    let cy = h / 2.0;
+    let t = g.light as f32;
+    let half = (t / 2.0).max(0.5);
+
+    match i {
+        // solid triangles, apex on the mid line, base on the opposite edge
+        0x0 => shade(bm, g, |x, y| x * cy <= w * (cy - (y - cy).abs())),
+        0x2 => shade(bm, g, |x, y| (w - x) * cy <= w * (cy - (y - cy).abs())),
+        // chevrons: the same two edges, stroked
+        0x1 => shade(bm, g, |x, y| {
+            edge(x, y, 0.0, 0.0, w, cy).min(edge(x, y, 0.0, h, w, cy)) <= half
+        }),
+        0x3 => shade(bm, g, |x, y| {
+            edge(x, y, w, 0.0, 0.0, cy).min(edge(x, y, w, h, 0.0, cy)) <= half
+        }),
+        // half circles: an ellipse the size of the cell, flat side on the edge
+        0x4 => shade(bm, g, |x, y| oval(x, y, 0.0, cy, w, cy) <= 1.0),
+        0x6 => shade(bm, g, |x, y| oval(x, y, w, cy, w, cy) <= 1.0),
+        0x5 => shade(bm, g, |x, y| ring(x, y, 0.0, cy, w, cy, t)),
+        0x7 => shade(bm, g, |x, y| ring(x, y, w, cy, w, cy, t)),
+        // corner wedges and their bare hypotenuses
+        0x8 => shade(bm, g, |x, y| y * w >= x * h),
+        0xA => shade(bm, g, |x, y| y * w >= (w - x) * h),
+        0xC => shade(bm, g, |x, y| y * w <= (w - x) * h),
+        0xE => shade(bm, g, |x, y| y * w <= x * h),
+        0x9 | 0xF => shade(bm, g, |x, y| edge(x, y, 0.0, 0.0, w, h) <= half),
+        _ => shade(bm, g, |x, y| edge(x, y, 0.0, h, w, 0.0) <= half),
+    }
+}
+
+// squared radius on the ellipse centred at (cx, cy) with semi-axes (a, b),
+// 1.0 being the outline
+fn oval(x: f32, y: f32, cx: f32, cy: f32, a: f32, b: f32) -> f32 {
+    let (u, v) = ((x - cx) / a, (y - cy) / b);
+
+    u * u + v * v
+}
+
+// stroke as the gap between two ellipses. distance to an ellipse has no cheap
+// closed form, and the gradient approximation blows the stroke out at the
+// poles - exactly where these arcs touch the cell edge and it would show
+fn ring(x: f32, y: f32, cx: f32, cy: f32, a: f32, b: f32, t: f32) -> bool {
+    oval(x, y, cx, cy, a, b) <= 1.0 && oval(x, y, cx, cy, (a - t).max(0.5), (b - t).max(0.5)) > 1.0
+}
+
+// distance to the segment, not to its line: the clamp keeps a stroke from
+// running past the vertex
+fn edge(x: f32, y: f32, ax: f32, ay: f32, bx: f32, by: f32) -> f32 {
+    let (dx, dy) = (bx - ax, by - ay);
+    let len = dx * dx + dy * dy;
+    let t = if len == 0.0 {
+        0.0
+    } else {
+        (((x - ax) * dx + (y - ay) * dy) / len).clamp(0.0, 1.0)
+    };
+
+    ((x - ax - t * dx).powi(2) + (y - ay - t * dy).powi(2)).sqrt()
+}
+
+// coverage of every pixel from an inside test, SS*SS samples each
+fn shade(bm: &mut Bitmap, g: &Geom, inside: impl Fn(f32, f32) -> bool) {
+    let step = 1.0 / SS as f32;
+
+    for y in 0..g.cell_height {
+        for x in 0..g.cell_width {
+            let mut hits = 0;
+
+            for sy in 0..SS {
+                for sx in 0..SS {
+                    let px = x as f32 + (sx as f32 + 0.5) * step;
+                    let py = y as f32 + (sy as f32 + 0.5) * step;
+
+                    hits += inside(px, py) as usize;
+                }
+            }
+
+            blend(bm, x, y, hits);
+        }
+    }
 }
 
 fn blend(bm: &mut Bitmap, x: usize, y: usize, hits: usize) {

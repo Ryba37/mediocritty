@@ -12,6 +12,11 @@ const CHAR_BITS: u32 = 21;
 // the shader, which decodes it to size the quad and UV rect.
 pub const WIDE_BIT: u32 = 1 << 31;
 
+// bit 30 marks coverage we rasterized ourselves and know to be exact, so the
+// shader leaves the gamma curve and the contrast boost off it. never stored in
+// the map, get_or_insert puts it on the way out
+pub const EXACT_BIT: u32 = 1 << 30;
+
 pub struct Atlas {
     data: Vec<u8>,
     cell_width: u32,
