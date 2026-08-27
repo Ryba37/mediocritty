@@ -8,7 +8,7 @@ mod boxdraw;
 mod cache;
 
 pub use atlas::Atlas;
-pub use cache::FontCache;
+pub use cache::{FontCache, Glyph};
 
 pub type GlyphId = u16;
 
@@ -24,4 +24,5 @@ pub struct Bitmap {
     pub width: usize,
     pub height: usize,
     pub stride: usize,
+    pub bpp: usize,
 }

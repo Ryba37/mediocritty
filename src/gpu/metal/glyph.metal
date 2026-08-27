@@ -16,6 +16,9 @@ struct Uniforms {
     uint pad;
     float gamma;
     float contrast;
+    float2 emoji_atlas;
+    uint emoji_cols;
+    uint emoji_pad;
 };
 
 struct GlyphInstance {

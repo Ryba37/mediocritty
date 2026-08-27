@@ -52,6 +52,7 @@ impl Geom {
             width: self.cell_width,
             height: self.cell_height,
             stride: self.cell_width,
+            bpp: 1,
         }
     }
 }

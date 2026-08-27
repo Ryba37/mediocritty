@@ -59,7 +59,8 @@ impl Runtime {
             .layout
             .build(term.renderable_content(), &mut self.cache, focused);
 
-        self.renderer.render(&frame, self.cache.atlas_mut());
+        let (atlas, emoji) = self.cache.atlases_mut();
+        self.renderer.render(&frame, atlas, emoji);
     }
 
     pub(crate) fn resize(&mut self, size: PhysicalSize<u32>) {

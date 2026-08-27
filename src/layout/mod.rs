@@ -6,7 +6,7 @@ use alacritty_terminal::vte::ansi::{Color, CursorShape, NamedColor};
 
 use crate::color::{indexed, srgb_to_linear};
 use crate::config::Config;
-use crate::font::FontCache;
+use crate::font::{FontCache, Glyph};
 
 struct Theme {
     background: [u8; 3],
@@ -46,6 +46,16 @@ pub struct GlyphInstance {
     pub gamma_mix: f32,
 }
 
+// metal rounds a struct up to its alignment, so float2 + uint is 16 bytes
+// there. pad here or the shader indexes into garbage
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct EmojiInstance {
+    pub offset: [f32; 2],
+    pub cell: u32,
+    pub pad: u32,
+}
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct BgRect {
@@ -56,12 +66,14 @@ pub struct BgRect {
 
 pub struct Layout {
     glyphs: Vec<GlyphInstance>,
+    emoji: Vec<EmojiInstance>,
     bg: Vec<BgRect>,
     theme: Theme,
 }
 
 pub struct Frame<'a> {
     pub glyphs: &'a [GlyphInstance],
+    pub emoji: &'a [EmojiInstance],
     pub bg: &'a [BgRect],
 }
 
@@ -69,6 +81,7 @@ impl Layout {
     pub fn new(config: &Config) -> Self {
         Self {
             glyphs: Vec::new(),
+            emoji: Vec::new(),
             bg: Vec::new(),
             theme: Theme::from_config(config),
         }
@@ -85,6 +98,7 @@ impl Layout {
         focused: bool,
     ) -> Frame<'_> {
         self.glyphs.clear();
+        self.emoji.clear();
         self.bg.clear();
 
         let colors = content.colors;
@@ -155,12 +169,21 @@ impl Layout {
                 (true, true) => 3,
             };
 
-            self.glyphs.push(GlyphInstance {
-                color: fg,
-                offset: [col, row],
-                cell: cache.get_or_insert(cell.c, wide, style),
-                gamma_mix: gamma_mix(fg, bg),
-            });
+            // emoji carry their own color, so fg and the gamma curve are
+            // dropped and the instance is a third of the size
+            match cache.get_or_insert(cell.c, wide, style) {
+                Glyph::Mask(n) => self.glyphs.push(GlyphInstance {
+                    color: fg,
+                    offset: [col, row],
+                    cell: n,
+                    gamma_mix: gamma_mix(fg, bg),
+                }),
+                Glyph::Color(n) => self.emoji.push(EmojiInstance {
+                    offset: [col, row],
+                    cell: n,
+                    pad: 0,
+                }),
+            }
         }
 
         if display_offset == 0 {
@@ -174,6 +197,7 @@ impl Layout {
 
         Frame {
             glyphs: &self.glyphs,
+            emoji: &self.emoji,
             bg: &self.bg,
         }
     }
@@ -228,7 +252,13 @@ impl Layout {
     }
 }
 
-fn resolve(color: Color, colors: &Colors, theme: &Theme, is_bright: bool, is_dim: bool) -> [f32; 4] {
+fn resolve(
+    color: Color,
+    colors: &Colors,
+    theme: &Theme,
+    is_bright: bool,
+    is_dim: bool,
+) -> [f32; 4] {
     let (rgb, is_dimmed) = match color {
         Color::Spec(rgb) => ([rgb.r, rgb.g, rgb.b], false),
         Color::Indexed(i) => {

@@ -13,6 +13,16 @@ pub fn glyph(device: &Device) -> Result<Pipeline, String> {
     )
 }
 
+pub fn emoji(device: &Device) -> Result<Pipeline, String> {
+    build(
+        device,
+        include_str!("emoji.metal"),
+        "vs_emoji",
+        "fs_emoji",
+        true,
+    )
+}
+
 pub fn bg(device: &Device) -> Result<Pipeline, String> {
     build(device, include_str!("bg.metal"), "vs_bg", "fs_bg", false)
 }

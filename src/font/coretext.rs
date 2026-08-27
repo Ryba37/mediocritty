@@ -3,7 +3,7 @@ use std::ptr::NonNull;
 use objc2_core_foundation::{CFRetained, CFString, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{
     CGBitmapContextCreate, CGBitmapContextGetBytesPerRow, CGBitmapContextGetData, CGColorSpace,
-    CGContext, CGGlyph, CGImageAlphaInfo,
+    CGContext, CGGlyph, CGImageAlphaInfo, CGImageByteOrderInfo, CGInterpolationQuality,
 };
 use objc2_core_text::{
     CTFont, CTFontDescriptor, CTFontOrientation, CTFontSymbolicTraits, CTFontUIFontType,
@@ -131,14 +131,109 @@ impl Font {
             width,
             height,
             stride,
+            bpp: 1,
         })
     }
 
-    pub fn rasterize(&self, ch: char, target: Metrics, wide: bool) -> Result<Bitmap, String> {
-        let glyph =
-            Self::glyph_for(&self.inner, ch).ok_or_else(|| format!("glyph {ch} not found"))?;
+    // color glyphs land in their own BGRA atlas, so they get their own
+    // context: device rgb, premultiplied first + little endian == BGRA
+    pub fn rasterize_color(
+        &self,
+        glyph: GlyphId,
+        target: Metrics,
+        wide: bool,
+    ) -> Result<Bitmap, String> {
+        let width = target.cell_width as usize * if wide { 2 } else { 1 };
+        let height = target.cell_height as usize;
 
-        self.rasterize_glyph(glyph, target, wide)
+        let space =
+            CGColorSpace::new_device_rgb().ok_or_else(|| "no rgb color space".to_string())?;
+
+        let info = CGImageAlphaInfo::PremultipliedFirst.0 | CGImageByteOrderInfo::Order32Little.0;
+
+        let ctx = unsafe {
+            CGBitmapContextCreate(
+                std::ptr::null_mut(),
+                width,
+                height,
+                8,
+                0,
+                Some(&space),
+                info,
+            )
+        }
+        .ok_or_else(|| "no bitmap context".to_string())?;
+
+        CGContext::set_should_antialias(Some(&ctx), true);
+        CGContext::set_allows_antialiasing(Some(&ctx), true);
+        // apple color emoji ships 160px strikes and we draw at ~30px, so the
+        // downscale filter is what the user actually sees
+        CGContext::set_interpolation_quality(Some(&ctx), CGInterpolationQuality::High);
+
+        let descent = (target.cell_height as f64 - target.ascent as f64).round();
+        let ink = Self::ink_bounds(&self.inner, glyph);
+        let (scale, origin) = fit(ink, width as f64, height as f64, descent);
+
+        if scale < 1.0 {
+            CGContext::scale_ctm(Some(&ctx), scale, scale);
+        }
+
+        let glyphs = [glyph];
+        let positions = [origin];
+
+        unsafe {
+            self.inner.draw_glyphs(
+                NonNull::from(&glyphs).cast(),
+                NonNull::from(&positions).cast(),
+                1,
+                &ctx,
+            );
+        }
+
+        let ptr = CGBitmapContextGetData(Some(&ctx)) as *const u8;
+
+        if ptr.is_null() {
+            return Err("no bitmap data".to_string());
+        }
+
+        let stride = CGBitmapContextGetBytesPerRow(Some(&ctx));
+
+        if stride < width * 4 {
+            return Err("bitmap stride smaller than width".to_string());
+        }
+
+        let mut data = unsafe { std::slice::from_raw_parts(ptr, stride * height) }.to_vec();
+        Self::unpremultiply(&mut data);
+
+        Ok(Bitmap {
+            data,
+            width,
+            height,
+            stride,
+            bpp: 4,
+        })
+    }
+
+    pub fn is_color(&self) -> bool {
+        unsafe { self.inner.symbolic_traits() }.contains(CTFontSymbolicTraits::ColorGlyphsTrait)
+    }
+
+    pub fn glyph(&self, ch: char) -> Option<GlyphId> {
+        Self::glyph_for(&self.inner, ch)
+    }
+
+    fn unpremultiply(data: &mut [u8]) {
+        for px in data.chunks_exact_mut(4) {
+            let a = px[3] as u32;
+
+            if a == 0 || a == 255 {
+                continue;
+            }
+
+            for c in &mut px[..3] {
+                *c = ((*c as u32 * 255 + a / 2) / a).min(255) as u8;
+            }
+        }
     }
 
     // tight ink box of the glyph at the font's point size, relative to the

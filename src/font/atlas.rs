@@ -16,6 +16,7 @@ pub struct Atlas {
     data: Vec<u8>,
     cell_width: u32,
     cell_height: u32,
+    bpp: u32,
     cols: u32,
     rows: u32,
     map: HashMap<u32, u32>,
@@ -25,13 +26,14 @@ pub struct Atlas {
 }
 
 impl Atlas {
-    pub fn new(cell_width: u32, cell_height: u32) -> Self {
-        let size = (INITIAL_COLS * cell_width * INITIAL_ROWS * cell_height) as usize;
+    pub fn new(cell_width: u32, cell_height: u32, bpp: u32) -> Self {
+        let size = (INITIAL_COLS * cell_width * bpp * INITIAL_ROWS * cell_height) as usize;
 
         Self {
             data: vec![0; size],
             cell_width,
             cell_height,
+            bpp,
             cols: INITIAL_COLS,
             rows: INITIAL_ROWS,
             map: HashMap::new(),
@@ -41,7 +43,8 @@ impl Atlas {
         }
     }
 
-    pub fn stride(&self) -> u32 {
+    // texture width in pixels
+    pub fn width(&self) -> u32 {
         self.cols * self.cell_width
     }
 
@@ -49,8 +52,17 @@ impl Atlas {
         self.rows * self.cell_height
     }
 
+    pub fn bpp(&self) -> u32 {
+        self.bpp
+    }
+
+    // bytesPerRow for the upload
+    pub fn row_bytes(&self) -> u32 {
+        self.width() * self.bpp
+    }
+
     fn byte_size(&self) -> usize {
-        (self.stride() * self.height()) as usize
+        (self.row_bytes() * self.height()) as usize
     }
 
     fn grow(&mut self) {
@@ -83,20 +95,22 @@ impl Atlas {
     }
 
     fn write(&mut self, n: u32, cell_cols: u32, bitmap: &Bitmap) {
-        debug_assert!(bitmap.stride >= bitmap.width);
+        debug_assert_eq!(bitmap.bpp, self.bpp as usize);
+        debug_assert!(bitmap.stride >= bitmap.width * bitmap.bpp);
         debug_assert!(bitmap.data.len() >= bitmap.stride * bitmap.height);
 
         let (x, y, _, _) = self.cell_rect(n);
-        let x = x as usize;
+        let bpp = self.bpp as usize;
+        let x = x as usize * bpp;
         let y = y as usize;
-        let stride = self.stride() as usize;
+        let row = self.row_bytes() as usize;
         // coretext::fit already keeps every glyph inside its slot(s), this is
         // just a safety net so a bad bitmap clips instead of panicking
-        let w = bitmap.width.min((self.cell_width * cell_cols) as usize);
+        let w = bitmap.width.min((self.cell_width * cell_cols) as usize) * bpp;
         let h = bitmap.height.min(self.cell_height as usize);
 
         self.data
-            .chunks_exact_mut(stride)
+            .chunks_exact_mut(row)
             .skip(y)
             .take(h)
             .zip(bitmap.data.chunks_exact(bitmap.stride))
@@ -125,6 +139,18 @@ impl Atlas {
         } else {
             self.insert_glyph(bitmap)
         };
+
+        self.map.insert(key, tagged);
+        tagged
+    }
+
+    // for an atlas whose slot is already two cells wide: one slot per glyph,
+    // WIDE_BIT only says how much of it to sample
+    pub fn insert_wide_slot(&mut self, key: u32, bitmap: &Bitmap, wide: bool) -> u32 {
+        debug_assert!(!self.map.contains_key(&key));
+
+        let n = self.insert_glyph(bitmap);
+        let tagged = if wide { n | WIDE_BIT } else { n };
 
         self.map.insert(key, tagged);
         tagged

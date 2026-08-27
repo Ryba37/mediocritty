@@ -3,7 +3,7 @@ use std::ptr::NonNull;
 use objc2::runtime::ProtocolObject;
 use objc2_metal::{MTLBuffer, MTLDevice, MTLRenderCommandEncoder, MTLResourceOptions};
 
-use crate::layout::{BgRect, GlyphInstance};
+use crate::layout::{BgRect, EmojiInstance, GlyphInstance};
 
 use super::types::{Buffer, Device};
 
@@ -18,6 +18,8 @@ const QUAD_POSITIONS: [[f32; 2]; 6] = [
 
 const INITIAL_CAPACITY: usize = 4096;
 const BG_INITIAL_CAPACITY: usize = 256;
+// most screens have none, so start small and let it grow
+const EMOJI_INITIAL_CAPACITY: usize = 64;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -29,6 +31,9 @@ pub struct Uniforms {
     pub pad: u32,
     pub gamma: f32,
     pub contrast: f32,
+    pub emoji_atlas: [f32; 2],
+    pub emoji_cols: u32,
+    pub emoji_pad: u32,
 }
 
 struct InstanceBuffer {
@@ -42,6 +47,7 @@ pub struct Buffers {
     vertex: Buffer,
     vertex_count: usize,
     glyphs: InstanceBuffer,
+    emoji: InstanceBuffer,
     bg: InstanceBuffer,
     uniform: Buffer,
     uniforms: Uniforms,
@@ -87,6 +93,7 @@ impl Buffers {
             vertex: make_buffer(device, &QUAD_POSITIONS)?,
             vertex_count: QUAD_POSITIONS.len(),
             glyphs: InstanceBuffer::new::<GlyphInstance>(device, INITIAL_CAPACITY)?,
+            emoji: InstanceBuffer::new::<EmojiInstance>(device, EMOJI_INITIAL_CAPACITY)?,
             bg: InstanceBuffer::new::<BgRect>(device, BG_INITIAL_CAPACITY)?,
             uniform: make_buffer(device, &[uniforms])?,
             uniforms,
@@ -105,6 +112,10 @@ impl Buffers {
         self.bg.count
     }
 
+    pub fn emoji_count(&self) -> usize {
+        self.emoji.count
+    }
+
     pub fn set_screen(&mut self, screen: [f32; 2]) {
         self.uniforms.screen = screen;
         self.write_uniforms();
@@ -115,13 +126,21 @@ impl Buffers {
         self.write_uniforms();
     }
 
+    pub fn set_emoji_atlas(&mut self, atlas: [f32; 2], cols: u32) {
+        self.uniforms.emoji_atlas = atlas;
+        self.uniforms.emoji_cols = cols;
+        self.write_uniforms();
+    }
+
     pub fn upload(
         &mut self,
         device: &Device,
         glyphs: &[GlyphInstance],
+        emoji: &[EmojiInstance],
         bg: &[BgRect],
     ) -> Result<(), String> {
         self.glyphs.upload(device, glyphs)?;
+        self.emoji.upload(device, emoji)?;
         self.bg.upload(device, bg)
     }
 
@@ -137,6 +156,12 @@ impl Buffers {
     pub fn bind_glyphs(&self, encoder: &ProtocolObject<dyn MTLRenderCommandEncoder>) {
         unsafe {
             encoder.setVertexBuffer_offset_atIndex(Some(&self.glyphs.buffer), 0, 1);
+        }
+    }
+
+    pub fn bind_emoji(&self, encoder: &ProtocolObject<dyn MTLRenderCommandEncoder>) {
+        unsafe {
+            encoder.setVertexBuffer_offset_atIndex(Some(&self.emoji.buffer), 0, 1);
         }
     }
 

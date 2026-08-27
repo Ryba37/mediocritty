@@ -54,10 +54,11 @@ impl AtlasTexture {
     }
 
     fn upload(&self, atlas: &Atlas, dirty: &[u32]) {
-        let stride = atlas.stride() as usize;
+        let row = atlas.row_bytes() as usize;
+        let bpp = atlas.bpp() as usize;
         let data = atlas.data();
 
-        debug_assert_eq!(data.len(), stride * atlas.height() as usize);
+        debug_assert_eq!(data.len(), row * atlas.height() as usize);
 
         for &n in dirty {
             let (x, y, w, h) = atlas.cell_rect(n);
@@ -75,26 +76,26 @@ impl AtlasTexture {
                 },
             };
 
-            let offset = y as usize * stride + x as usize;
+            let offset = y as usize * row + x as usize * bpp;
             let ptr = NonNull::from(&data[offset]).cast();
 
             unsafe {
                 self.texture
-                    .replaceRegion_mipmapLevel_withBytes_bytesPerRow(region, 0, ptr, stride);
+                    .replaceRegion_mipmapLevel_withBytes_bytesPerRow(region, 0, ptr, row);
             }
         }
     }
 
     fn upload_all(&self, atlas: &Atlas) {
-        let stride = atlas.stride() as usize;
+        let row = atlas.row_bytes() as usize;
         let data = atlas.data();
 
-        debug_assert_eq!(data.len(), stride * atlas.height() as usize);
+        debug_assert_eq!(data.len(), row * atlas.height() as usize);
 
         let region = MTLRegion {
             origin: MTLOrigin { x: 0, y: 0, z: 0 },
             size: MTLSize {
-                width: stride,
+                width: atlas.width() as usize,
                 height: atlas.height() as usize,
                 depth: 1,
             },
@@ -106,17 +107,25 @@ impl AtlasTexture {
                     region,
                     0,
                     NonNull::from(data).cast(),
-                    stride,
+                    row,
                 );
         }
     }
 }
 
 fn create_texture(device: &Device, atlas: &Atlas) -> Result<Texture, String> {
+    // the atlas knows its own format: 1 byte is a coverage mask, 4 is color.
+    // sRGB so the sampler hands the shader linear rgb
+    let format = if atlas.bpp() == 1 {
+        MTLPixelFormat::R8Unorm
+    } else {
+        MTLPixelFormat::BGRA8Unorm_sRGB
+    };
+
     let desc = unsafe {
         MTLTextureDescriptor::texture2DDescriptorWithPixelFormat_width_height_mipmapped(
-            MTLPixelFormat::R8Unorm,
-            atlas.stride() as usize,
+            format,
+            atlas.width() as usize,
             atlas.height() as usize,
             false,
         )

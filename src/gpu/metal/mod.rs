@@ -27,9 +27,11 @@ mod types;
 pub struct MetalCtx {
     context: Context,
     glyph_pipeline: Pipeline,
+    emoji_pipeline: Pipeline,
     bg_pipeline: Pipeline,
     buffers: Buffers,
     atlas_texture: AtlasTexture,
+    emoji_texture: AtlasTexture,
     background: [f32; 3],
 }
 
@@ -38,32 +40,40 @@ impl MetalCtx {
         window: &Window,
         metrics: Metrics,
         atlas: &Atlas,
+        emoji: &Atlas,
         config: &Config,
     ) -> Result<Self, String> {
         let context = Context::new(window)?;
         let glyph_pipeline = pipeline::glyph(context.device())?;
+        let emoji_pipeline = pipeline::emoji(context.device())?;
         let bg_pipeline = pipeline::bg(context.device())?;
 
         let size = window.inner_size();
         let uniforms = Uniforms {
             cell: [metrics.cell_width as f32, metrics.cell_height as f32],
             screen: [size.width as f32, size.height as f32],
-            atlas: [atlas.stride() as f32, atlas.height() as f32],
+            atlas: [atlas.width() as f32, atlas.height() as f32],
             cols: atlas.cols(),
             pad: 0,
             gamma: config.font.gamma.max(0.01),
             contrast: 1.0 + config.font.contrast.clamp(0.0, 100.0) * 0.01,
+            emoji_atlas: [emoji.width() as f32, emoji.height() as f32],
+            emoji_cols: emoji.cols(),
+            emoji_pad: 0,
         };
 
         let buffers = Buffers::new(context.device(), uniforms)?;
         let atlas_texture = AtlasTexture::new(context.device(), atlas)?;
+        let emoji_texture = AtlasTexture::new(context.device(), emoji)?;
 
         Ok(Self {
             context,
             glyph_pipeline,
+            emoji_pipeline,
             bg_pipeline,
             buffers,
             atlas_texture,
+            emoji_texture,
             background: linear_background(config.theme.background.0),
         })
     }
@@ -73,20 +83,25 @@ impl MetalCtx {
         self.buffers.set_screen([width as f32, height as f32]);
     }
 
-    fn sync_atlas(&mut self, atlas: &mut Atlas) {
+    fn sync_atlas(&mut self, atlas: &mut Atlas, emoji: &mut Atlas) {
         if self.atlas_texture.sync(self.context.device(), atlas) {
             self.buffers
-                .set_atlas([atlas.stride() as f32, atlas.height() as f32]);
+                .set_atlas([atlas.width() as f32, atlas.height() as f32]);
+        }
+
+        if self.emoji_texture.sync(self.context.device(), emoji) {
+            self.buffers
+                .set_emoji_atlas([emoji.width() as f32, emoji.height() as f32], emoji.cols());
         }
     }
 
     fn upload(&mut self, frame: &Frame) -> Result<(), String> {
         self.buffers
-            .upload(self.context.device(), frame.glyphs, frame.bg)
+            .upload(self.context.device(), frame.glyphs, frame.emoji, frame.bg)
     }
 
-    pub fn render(&mut self, frame: &Frame, atlas: &mut Atlas) {
-        self.sync_atlas(atlas);
+    pub fn render(&mut self, frame: &Frame, atlas: &mut Atlas, emoji: &mut Atlas) {
+        self.sync_atlas(atlas, emoji);
         if let Err(e) = self.upload(frame) {
             eprintln!("{e}");
             return;
@@ -139,6 +154,20 @@ impl MetalCtx {
                     0,
                     self.buffers.vertex_count(),
                     self.buffers.glyph_count(),
+                );
+            }
+
+            // last: emoji blend over whatever the mask pass left, and the pass
+            // costs nothing on a screen without any
+            if self.buffers.emoji_count() > 0 {
+                encoder.setRenderPipelineState(&self.emoji_pipeline);
+                self.buffers.bind_emoji(&encoder);
+                self.emoji_texture.bind(&encoder);
+                encoder.drawPrimitives_vertexStart_vertexCount_instanceCount(
+                    MTLPrimitiveType::Triangle,
+                    0,
+                    self.buffers.vertex_count(),
+                    self.buffers.emoji_count(),
                 );
             }
 

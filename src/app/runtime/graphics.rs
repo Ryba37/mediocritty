@@ -16,7 +16,7 @@ impl Runtime {
         let fonts = Self::build_fonts(config, window.scale_factor())?;
         let cache = FontCache::new(fonts)?;
         let metrics = cache.metrics();
-        let renderer = Renderer::new(window, metrics, cache.atlas(), config)?;
+        let renderer = Renderer::new(window, metrics, cache.atlas(), cache.emoji(), config)?;
 
         Ok((metrics, cache, renderer))
     }
