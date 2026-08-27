@@ -13,6 +13,12 @@ pub fn key_to_bytes(
         return None;
     }
 
+    if let Key::Named(NamedKey::Tab) = event.logical_key
+        && modifiers.shift_key()
+    {
+        return Some(b"\x1b[Z".to_vec());
+    }
+
     if let Key::Named(named) = event.logical_key
         && let Some(bytes) = app_cursor_key(&named, mode)
     {
