@@ -1,6 +1,6 @@
 use winit::event_loop::ActiveEventLoop;
 
-use crate::term::UserEvent;
+use crate::{app::DEFAULT_WINDOW_NAME, term::UserEvent};
 
 use super::App;
 
@@ -36,6 +36,11 @@ impl App {
             }
 
             UserEvent::ConfigReload(config) => self.reload_config(config),
+            UserEvent::ResetTitle => {
+                if let Some(runtime) = self.runtime() {
+                    runtime.window.set_title(DEFAULT_WINDOW_NAME);
+                }
+            }
         }
     }
 }

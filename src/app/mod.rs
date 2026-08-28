@@ -17,6 +17,8 @@ mod user_event;
 
 use input::InputState;
 
+pub const DEFAULT_WINDOW_NAME: &'static str = "mediocritty";
+
 pub struct App {
     runtime: Option<Runtime>,
     proxy: EventLoopProxy<UserEvent>,
@@ -73,7 +75,7 @@ impl ApplicationHandler<UserEvent> for App {
         }
 
         let window = event_loop
-            .create_window(Window::default_attributes())
+            .create_window(Window::default_attributes().with_title(DEFAULT_WINDOW_NAME))
             .unwrap();
 
         let runtime = match Runtime::new(window, self.proxy.clone(), &self.config) {

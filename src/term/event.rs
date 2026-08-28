@@ -16,6 +16,7 @@ pub enum UserEvent {
     Wakeup,
     Exit,
     Title(String),
+    ResetTitle,
     ClipboardStore(ClipboardType, String),
     ClipboardLoad(
         ClipboardType,
@@ -45,6 +46,7 @@ impl EventListener for EventProxy {
             Event::Title(s) => UserEvent::Title(s),
             Event::ClipboardStore(ty, text) => UserEvent::ClipboardStore(ty, text),
             Event::ClipboardLoad(ty, formatter) => UserEvent::ClipboardLoad(ty, formatter),
+            Event::ResetTitle => UserEvent::ResetTitle,
 
             _ => return,
         };
