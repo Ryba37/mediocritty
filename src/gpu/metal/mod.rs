@@ -8,7 +8,7 @@ use objc2_quartz_core::CAMetalDrawable;
 use winit::window::Window;
 
 use crate::{
-    color::srgb_to_linear,
+    color::linear,
     config::Config,
     font::{Atlas, Metrics},
     gpu::metal::{
@@ -196,9 +196,5 @@ impl MetalCtx {
 }
 
 fn linear_background(rgb: [u8; 3]) -> [f32; 3] {
-    [
-        srgb_to_linear(rgb[0] as f32 / 255.0),
-        srgb_to_linear(rgb[1] as f32 / 255.0),
-        srgb_to_linear(rgb[2] as f32 / 255.0),
-    ]
+    [linear(rgb[0]), linear(rgb[1]), linear(rgb[2])]
 }

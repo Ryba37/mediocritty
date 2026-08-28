@@ -4,7 +4,7 @@ use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::color::Colors;
 use alacritty_terminal::vte::ansi::{Color, CursorShape, NamedColor};
 
-use crate::color::{indexed, srgb_to_linear};
+use crate::color::{indexed, linear};
 use crate::config::Config;
 use crate::font::{FontCache, Glyph};
 
@@ -295,12 +295,7 @@ fn resolve(
 }
 
 fn to_linear(rgb: [u8; 3]) -> [f32; 4] {
-    [
-        srgb_to_linear(rgb[0] as f32 / 255.0),
-        srgb_to_linear(rgb[1] as f32 / 255.0),
-        srgb_to_linear(rgb[2] as f32 / 255.0),
-        1.0,
-    ]
+    [linear(rgb[0]), linear(rgb[1]), linear(rgb[2]), 1.0]
 }
 
 fn luminance(c: [f32; 4]) -> f32 {

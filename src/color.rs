@@ -1,6 +1,12 @@
+use std::array::from_fn;
+use std::sync::LazyLock;
+
 use serde::{Deserialize, Deserializer};
 
 const CUBE: [u8; 6] = [0, 95, 135, 175, 215, 255];
+
+static SRGB_TO_LINEAR: LazyLock<[f32; 256]> =
+    LazyLock::new(|| from_fn(|i| srgb_to_linear(i as f32 / 255.0)));
 
 #[derive(Clone, Copy)]
 pub struct HexColor(pub [u8; 3]);
@@ -93,7 +99,7 @@ impl Palette {
     }
 }
 
-pub fn srgb_to_linear(c: f32) -> f32 {
+fn srgb_to_linear(c: f32) -> f32 {
     if c <= 0.04045 {
         c / 12.92
     } else {
@@ -117,4 +123,8 @@ pub fn indexed(i: u8, palette: &[[u8; 3]; 16]) -> [u8; 3] {
             [v, v, v]
         }
     }
+}
+
+pub fn linear(c: u8) -> f32 {
+    SRGB_TO_LINEAR[c as usize]
 }
