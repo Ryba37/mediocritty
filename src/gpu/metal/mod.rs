@@ -1,3 +1,4 @@
+use block2::RcBlock;
 use objc2_metal::{
     MTLClearColor, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDrawable,
     MTLLoadAction, MTLPrimitiveType, MTLRenderCommandEncoder, MTLRenderPassDescriptor,
@@ -10,6 +11,10 @@ use crate::{
     color::srgb_to_linear,
     config::Config,
     font::{Atlas, Metrics},
+    gpu::metal::{
+        buffers::FRAMES_IN_FLIGHT,
+        sync::{Frames, Guards},
+    },
     layout::Frame,
 };
 
@@ -22,6 +27,7 @@ mod atlas_texture;
 mod buffers;
 mod context;
 mod pipeline;
+mod sync;
 mod types;
 
 pub struct MetalCtx {
@@ -33,6 +39,7 @@ pub struct MetalCtx {
     atlas_texture: AtlasTexture,
     emoji_texture: AtlasTexture,
     background: [f32; 3],
+    frames: Frames,
 }
 
 impl MetalCtx {
@@ -75,6 +82,7 @@ impl MetalCtx {
             atlas_texture,
             emoji_texture,
             background: linear_background(config.theme.background.0),
+            frames: Frames::new(FRAMES_IN_FLIGHT as isize),
         })
     }
 
@@ -101,6 +109,8 @@ impl MetalCtx {
     }
 
     pub fn render(&mut self, frame: &Frame, atlas: &mut Atlas, emoji: &mut Atlas) {
+        let mut guard = Guards::new(&self.frames);
+
         self.sync_atlas(atlas, emoji);
         if let Err(e) = self.upload(frame) {
             eprintln!("{e}");
@@ -172,6 +182,11 @@ impl MetalCtx {
             }
 
             encoder.endEncoding();
+            let semaphore = self.frames.handle();
+            let block = RcBlock::new(move |_| {
+                semaphore.signal();
+            });
+            cmd.addCompletedHandler(RcBlock::as_ptr(&block));
             cmd.commit();
             cmd.waitUntilScheduled();
             drawable.present();

@@ -21,6 +21,8 @@ const BG_INITIAL_CAPACITY: usize = 256;
 // most screens have none, so start small and let it grow
 const EMOJI_INITIAL_CAPACITY: usize = 64;
 
+pub const FRAMES_IN_FLIGHT: usize = 3;
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Uniforms {
@@ -37,7 +39,7 @@ pub struct Uniforms {
 }
 
 struct InstanceBuffer {
-    buffer: Buffer,
+    buffers: [Buffer; FRAMES_IN_FLIGHT],
     capacity: usize,
     count: usize,
     elem_size: usize,
@@ -51,19 +53,26 @@ pub struct Buffers {
     bg: InstanceBuffer,
     uniform: Buffer,
     uniforms: Uniforms,
+    frame: usize,
 }
 
 impl InstanceBuffer {
     fn new<T>(device: &Device, capacity: usize) -> Result<Self, String> {
+        let buffers: [Buffer; FRAMES_IN_FLIGHT] = [
+            empty_buffer::<T>(device, capacity)?,
+            empty_buffer::<T>(device, capacity)?,
+            empty_buffer::<T>(device, capacity)?,
+        ];
+
         Ok(Self {
-            buffer: empty_buffer::<T>(device, capacity)?,
+            buffers,
             capacity,
             count: 0,
             elem_size: size_of::<T>(),
         })
     }
 
-    fn upload<T>(&mut self, device: &Device, data: &[T]) -> Result<(), String> {
+    fn upload<T>(&mut self, device: &Device, data: &[T], frame: usize) -> Result<(), String> {
         debug_assert_eq!(self.elem_size, size_of::<T>());
 
         self.count = data.len();
@@ -74,12 +83,15 @@ impl InstanceBuffer {
 
         if data.len() > self.capacity {
             let capacity = data.len().next_power_of_two();
-            self.buffer = empty_buffer::<T>(device, capacity)?;
+            for buffer in self.buffers.iter_mut() {
+                *buffer = empty_buffer::<T>(device, capacity)?;
+            }
+
             self.capacity = capacity;
         }
 
         unsafe {
-            let dst = self.buffer.contents().cast::<T>().as_ptr();
+            let dst = self.buffers[frame].contents().cast::<T>().as_ptr();
             std::ptr::copy_nonoverlapping(data.as_ptr(), dst, data.len());
         }
 
@@ -97,6 +109,7 @@ impl Buffers {
             bg: InstanceBuffer::new::<BgRect>(device, BG_INITIAL_CAPACITY)?,
             uniform: make_buffer(device, &[uniforms])?,
             uniforms,
+            frame: 0,
         })
     }
 
@@ -139,9 +152,11 @@ impl Buffers {
         emoji: &[EmojiInstance],
         bg: &[BgRect],
     ) -> Result<(), String> {
-        self.glyphs.upload(device, glyphs)?;
-        self.emoji.upload(device, emoji)?;
-        self.bg.upload(device, bg)
+        self.frame = (self.frame + 1) % FRAMES_IN_FLIGHT;
+
+        self.glyphs.upload(device, glyphs, self.frame)?;
+        self.emoji.upload(device, emoji, self.frame)?;
+        self.bg.upload(device, bg, self.frame)
     }
 
     pub fn bind_common(&self, encoder: &ProtocolObject<dyn MTLRenderCommandEncoder>) {
@@ -155,19 +170,19 @@ impl Buffers {
 
     pub fn bind_glyphs(&self, encoder: &ProtocolObject<dyn MTLRenderCommandEncoder>) {
         unsafe {
-            encoder.setVertexBuffer_offset_atIndex(Some(&self.glyphs.buffer), 0, 1);
+            encoder.setVertexBuffer_offset_atIndex(Some(&self.glyphs.buffers[self.frame]), 0, 1);
         }
     }
 
     pub fn bind_emoji(&self, encoder: &ProtocolObject<dyn MTLRenderCommandEncoder>) {
         unsafe {
-            encoder.setVertexBuffer_offset_atIndex(Some(&self.emoji.buffer), 0, 1);
+            encoder.setVertexBuffer_offset_atIndex(Some(&self.emoji.buffers[self.frame]), 0, 1);
         }
     }
 
     pub fn bind_bg(&self, encoder: &ProtocolObject<dyn MTLRenderCommandEncoder>) {
         unsafe {
-            encoder.setVertexBuffer_offset_atIndex(Some(&self.bg.buffer), 0, 1);
+            encoder.setVertexBuffer_offset_atIndex(Some(&self.bg.buffers[self.frame]), 0, 1);
         }
     }
 

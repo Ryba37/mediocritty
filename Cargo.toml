@@ -25,3 +25,5 @@ objc2-quartz-core = { version = "0.3.2", features = ["CAMetalLayer"] }
 objc2-core-foundation = "0.3.2"
 objc2-core-graphics = "0.3.2"
 objc2-core-text = { version = "0.3.2", features = ["CTFontTraits"] }
+block2 = "0.6.2"
+dispatch2 = "0.3.1"
