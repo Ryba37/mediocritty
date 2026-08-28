@@ -187,6 +187,7 @@ impl MetalCtx {
                 semaphore.signal();
             });
             cmd.addCompletedHandler(RcBlock::as_ptr(&block));
+            guard.release();
             cmd.commit();
             cmd.waitUntilScheduled();
             drawable.present();
