@@ -81,16 +81,19 @@ impl Terminal {
         self.term.lock().scroll_display(Scroll::Delta(delta));
     }
 
-    pub fn display_offset(&self) -> usize {
-        self.term.lock().grid().display_offset()
-    }
+    pub fn viewport(&self) -> (usize, usize, usize) {
+        let term = self.term.lock();
+        let grid = term.grid();
 
-    pub fn columns(&self) -> usize {
-        self.term.lock().columns()
+        (grid.display_offset(), grid.columns(), grid.screen_lines())
     }
 
     pub fn start_selection(&mut self, selection: Selection) {
         self.term.lock().selection = Some(selection);
+    }
+
+    pub fn clear_selection(&mut self) {
+        self.term.lock().selection = None;
     }
 
     pub fn update_selection(&mut self, point: Point, side: Side) {

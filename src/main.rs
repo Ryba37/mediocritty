@@ -10,6 +10,7 @@ mod font;
 mod gpu;
 mod input;
 mod layout;
+mod mouse;
 mod term;
 
 fn main() {

@@ -73,6 +73,20 @@ pub fn scroll_delta_to_lines(
     lines as i32
 }
 
+pub fn cell_from_pixels(
+    x: f64,
+    y: f64,
+    cell_width: f64,
+    cell_height: f64,
+    columns: usize,
+    screen_lines: usize,
+) -> (usize, usize) {
+    let column = ((x.max(0.0) / cell_width) as usize).min(columns.saturating_sub(1));
+    let line = ((y.max(0.0) / cell_height) as usize).min(screen_lines.saturating_sub(1));
+
+    (column, line)
+}
+
 pub fn point_from_pixels(
     x: f64,
     y: f64,
@@ -80,11 +94,12 @@ pub fn point_from_pixels(
     cell_height: f64,
     display_offset: usize,
     columns: usize,
+    screen_lines: usize,
 ) -> (Point, Side) {
-    let column = ((x / cell_width) as usize).min(columns.saturating_sub(1));
-    let line = (y / cell_height) as i32 - display_offset as i32;
+    let (column, line) = cell_from_pixels(x, y, cell_width, cell_height, columns, screen_lines);
+    let line = line as i32 - display_offset as i32;
 
-    let cell_x = x - column as f64 * cell_width;
+    let cell_x = x.max(0.0) - column as f64 * cell_width;
     let side = if cell_x < cell_width / 2.0 {
         Side::Left
     } else {

@@ -74,6 +74,8 @@ pub struct Config {
     pub cursor: Cursor,
     pub lines_per_notch: f64,
     pub multi_click_window_ms: u64,
+    pub autoscroll_interval_ms: u64,
+    pub autoscroll_speed: f64,
 }
 
 impl Default for Config {
@@ -84,6 +86,8 @@ impl Default for Config {
             cursor: Cursor::default(),
             lines_per_notch: 3.0,
             multi_click_window_ms: 400,
+            autoscroll_interval_ms: 25,
+            autoscroll_speed: 1.0,
         }
     }
 }

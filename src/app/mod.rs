@@ -1,7 +1,9 @@
+use std::time::{Duration, Instant};
+
 use winit::{
     application::ApplicationHandler,
     event::WindowEvent,
-    event_loop::{ActiveEventLoop, EventLoopProxy},
+    event_loop::{ActiveEventLoop, ControlFlow, EventLoopProxy},
     window::{Window, WindowId},
 };
 
@@ -134,6 +136,10 @@ impl ApplicationHandler<UserEvent> for App {
             WindowEvent::Focused(focused) => {
                 self.input.focused = focused;
 
+                if !focused {
+                    self.input.release_all();
+                }
+
                 if let Some(runtime) = self.runtime.as_mut() {
                     runtime.set_focused(focused);
                 }
@@ -144,5 +150,30 @@ impl ApplicationHandler<UserEvent> for App {
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
         self.on_user_event(event_loop, event);
+    }
+
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        let Some(at) = self.input.autoscroll_at else {
+            event_loop.set_control_flow(ControlFlow::Wait);
+            return;
+        };
+
+        let now = Instant::now();
+
+        if now < at {
+            event_loop.set_control_flow(ControlFlow::WaitUntil(at));
+            return;
+        }
+
+        let next = self
+            .autoscroll_tick()
+            .then(|| now + Duration::from_millis(self.config.autoscroll_interval_ms));
+
+        self.input.autoscroll_at = next;
+
+        event_loop.set_control_flow(match next {
+            Some(at) => ControlFlow::WaitUntil(at),
+            None => ControlFlow::Wait,
+        });
     }
 }
