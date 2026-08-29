@@ -19,6 +19,8 @@ mod size;
 pub use event::{EventProxy, UserEvent};
 pub use size::TermSize;
 
+const DEFAULT_LOCALE: &str = "en_US.UTF-8";
+
 pub struct Terminal {
     term: Arc<FairMutex<Term<EventProxy>>>,
     notifier: Notifier,
@@ -32,6 +34,7 @@ impl Terminal {
         rows: usize,
         cell_width: u16,
         cell_height: u16,
+        locale_cfg: Option<String>,
     ) -> Result<Self, String> {
         let size = TermSize::new(cols, rows);
         let term = Term::new(Config::default(), &size, proxy.clone());
@@ -44,8 +47,40 @@ impl Terminal {
             cell_height,
         };
 
-        let pty =
-            tty::new(&tty::Options::default(), window_size, 0).map_err(|e| format!("pty: {e}"))?;
+        let mut options = tty::Options::default();
+
+        let locale = match locale_cfg {
+            Some(l) => {
+                if locale_available(&l) {
+                    l
+                } else {
+                    String::from(DEFAULT_LOCALE)
+                }
+            }
+            None => {
+                let locale = system_locale();
+                if locale_available(&locale) {
+                    locale
+                } else {
+                    String::from(DEFAULT_LOCALE)
+                }
+            }
+        };
+
+        for key in [
+            "LANG",
+            "LC_ALL",
+            "LC_CTYPE",
+            "LC_COLLATE",
+            "LC_MESSAGES",
+            "LC_MONETARY",
+            "LC_NUMERIC",
+            "LC_TIME",
+        ] {
+            options.env.insert(key.into(), locale.clone());
+        }
+
+        let pty = tty::new(&options, window_size, 0).map_err(|e| format!("pty: {e}"))?;
 
         let event_loop = EventLoop::new(term.clone(), proxy.clone(), pty, false, false)
             .map_err(|e| format!("event loop: {e}"))?;
@@ -132,4 +167,27 @@ impl Drop for Terminal {
     fn drop(&mut self) {
         self.shutdown();
     }
+}
+
+#[cfg(target_os = "macos")]
+fn system_locale() -> String {
+    std::process::Command::new("defaults")
+        .args(["read", "-g", "AppleLocale"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .map(|s| format!("{s}.UTF-8"))
+        .unwrap_or_else(|| "en_US.UTF-8".into())
+}
+
+#[cfg(target_os = "macos")]
+fn locale_available(loc: &str) -> bool {
+    std::process::Command::new("locale")
+        .arg("-a")
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).lines().any(|l| l == loc))
+        .unwrap_or(false)
 }

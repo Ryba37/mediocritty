@@ -2,8 +2,6 @@
 
 another (almost) fully functional mediocre terminal with a native metal renderer
 
-## cool screenshot
-
 ![Mediocritty screenshot](assets/screenshot.png)
 
 ## config
@@ -53,6 +51,9 @@ bold_is_bright = false
 
 [cursor]
 hollow_cursor_thickness = 0.1
+
+[shell]
+locale = "en_US.UTF-8"
 ```
 
 ## any problems?

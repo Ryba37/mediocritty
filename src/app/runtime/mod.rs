@@ -39,6 +39,7 @@ impl Runtime {
             rows,
             metrics.cell_width as u16,
             metrics.cell_height as u16,
+            config.shell.locale.clone(),
         )?;
 
         Ok(Self {

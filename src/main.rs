@@ -1,3 +1,4 @@
+use alacritty_terminal::tty::setup_env;
 use winit::event_loop::{ControlFlow, EventLoop};
 
 use crate::{config::Config, term::UserEvent};
@@ -23,7 +24,7 @@ fn main() {
     let config = Config::load();
     Config::watch(event_loop.create_proxy());
 
-    alacritty_terminal::tty::setup_env();
+    setup_env();
 
     let mut app = app::App::new(event_loop.create_proxy(), config);
     let _ = event_loop.run_app(&mut app);
