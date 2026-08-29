@@ -20,6 +20,7 @@ pub use event::{EventProxy, UserEvent};
 pub use size::TermSize;
 
 const DEFAULT_LOCALE: &str = "en_US.UTF-8";
+const FALLBACK_LOCALE: &str = "C";
 
 pub struct Terminal {
     term: Arc<FairMutex<Term<EventProxy>>>,
@@ -52,8 +53,10 @@ impl Terminal {
         let candidate = locale_cfg.unwrap_or_else(system_locale);
         let locale = if locale_available(&candidate) {
             candidate
-        } else {
+        } else if locale_available(DEFAULT_LOCALE) {
             String::from(DEFAULT_LOCALE)
+        } else {
+            String::from(FALLBACK_LOCALE)
         };
 
         for key in [
