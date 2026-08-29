@@ -27,3 +27,8 @@ objc2-core-graphics = "0.3.2"
 objc2-core-text = { version = "0.3.2", features = ["CTFontTraits"] }
 block2 = "0.6.2"
 dispatch2 = "0.3.1"
+
+[package.metadata.packager]
+product-name = "Mediocritty"
+identifier = "com.itsfisch.mediocritty"
+category = "DeveloperTools"
