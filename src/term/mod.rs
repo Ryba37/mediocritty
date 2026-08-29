@@ -49,22 +49,11 @@ impl Terminal {
 
         let mut options = tty::Options::default();
 
-        let locale = match locale_cfg {
-            Some(l) => {
-                if locale_available(&l) {
-                    l
-                } else {
-                    String::from(DEFAULT_LOCALE)
-                }
-            }
-            None => {
-                let locale = system_locale();
-                if locale_available(&locale) {
-                    locale
-                } else {
-                    String::from(DEFAULT_LOCALE)
-                }
-            }
+        let candidate = locale_cfg.unwrap_or_else(system_locale);
+        let locale = if locale_available(&candidate) {
+            candidate
+        } else {
+            String::from(DEFAULT_LOCALE)
         };
 
         for key in [
