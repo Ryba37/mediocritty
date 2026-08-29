@@ -4,6 +4,21 @@ another (almost) fully functional mediocre terminal with a native metal renderer
 
 ![Mediocritty screenshot](assets/screenshot.png)
 
+## building
+
+you can download latest release from [here](https://github.com/Ryba37/mediocritty/releases) or build .dmg from source
+
+```sh
+cargo install cargo-packager # if you want .dmg/.app
+
+git clone https://github.com/Ryba37/mediocritty
+cd mediocritty
+
+cargo build --release # you will get binary in target/release/mediocritty
+# OR
+cargo packager --release # and then you will have .dmg and .app in target/release/
+```
+
 ## config
 
 config is stored at ~/.config/mediocritty/config.toml
