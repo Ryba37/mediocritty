@@ -17,6 +17,8 @@ struct Uniforms {
     float2 emoji_atlas;
     uint emoji_cols;
     uint emoji_pad;
+    float underline_thickness;
+    float undercurl_amplitude;
 };
 
 struct EmojiInstance {

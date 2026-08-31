@@ -35,6 +35,7 @@ pub struct MetalCtx {
     glyph_pipeline: Pipeline,
     emoji_pipeline: Pipeline,
     bg_pipeline: Pipeline,
+    underline_pipeline: Pipeline,
     buffers: Buffers,
     atlas_texture: AtlasTexture,
     emoji_texture: AtlasTexture,
@@ -54,6 +55,7 @@ impl MetalCtx {
         let glyph_pipeline = pipeline::glyph(context.device())?;
         let emoji_pipeline = pipeline::emoji(context.device())?;
         let bg_pipeline = pipeline::bg(context.device())?;
+        let underline_pipeline = pipeline::underline(context.device())?;
 
         let size = window.inner_size();
         let uniforms = Uniforms {
@@ -67,6 +69,10 @@ impl MetalCtx {
             emoji_atlas: [emoji.width() as f32, emoji.height() as f32],
             emoji_cols: emoji.cols(),
             emoji_pad: 0,
+            underline_thickness: metrics.underline_thickness,
+            // half the descent, same as alacritty: the curl swings through
+            // the whole descent band without spilling past it
+            undercurl_amplitude: 0.5 * (metrics.cell_height as f32 - metrics.ascent),
         };
 
         let buffers = Buffers::new(context.device(), uniforms)?;
@@ -78,6 +84,7 @@ impl MetalCtx {
             glyph_pipeline,
             emoji_pipeline,
             bg_pipeline,
+            underline_pipeline,
             buffers,
             atlas_texture,
             emoji_texture,
@@ -104,8 +111,13 @@ impl MetalCtx {
     }
 
     fn upload(&mut self, frame: &Frame) -> Result<(), String> {
-        self.buffers
-            .upload(self.context.device(), frame.glyphs, frame.emoji, frame.bg)
+        self.buffers.upload(
+            self.context.device(),
+            frame.glyphs,
+            frame.emoji,
+            frame.bg,
+            frame.underlines,
+        )
     }
 
     pub fn render(&mut self, frame: &Frame, atlas: &mut Atlas, emoji: &mut Atlas) {
@@ -178,6 +190,20 @@ impl MetalCtx {
                     0,
                     self.buffers.vertex_count(),
                     self.buffers.emoji_count(),
+                );
+            }
+
+            // last of all: underlines paint over glyph descenders same as a
+            // real terminal, and undercurl/dotted need to blend their
+            // fragment-computed pattern over whatever's already there
+            if self.buffers.underline_count() > 0 {
+                encoder.setRenderPipelineState(&self.underline_pipeline);
+                self.buffers.bind_underlines(&encoder);
+                encoder.drawPrimitives_vertexStart_vertexCount_instanceCount(
+                    MTLPrimitiveType::Triangle,
+                    0,
+                    self.buffers.vertex_count(),
+                    self.buffers.underline_count(),
                 );
             }
 

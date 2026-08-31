@@ -3,7 +3,7 @@ use std::ptr::NonNull;
 use objc2::runtime::ProtocolObject;
 use objc2_metal::{MTLBuffer, MTLDevice, MTLRenderCommandEncoder, MTLResourceOptions};
 
-use crate::layout::{BgRect, EmojiInstance, GlyphInstance};
+use crate::layout::{BgRect, EmojiInstance, GlyphInstance, UnderlineInstance};
 
 use super::types::{Buffer, Device};
 
@@ -20,6 +20,7 @@ const INITIAL_CAPACITY: usize = 4096;
 const BG_INITIAL_CAPACITY: usize = 256;
 // most screens have none, so start small and let it grow
 const EMOJI_INITIAL_CAPACITY: usize = 64;
+const UNDERLINE_INITIAL_CAPACITY: usize = 256;
 
 pub const FRAMES_IN_FLIGHT: usize = 3;
 
@@ -36,6 +37,11 @@ pub struct Uniforms {
     pub emoji_atlas: [f32; 2],
     pub emoji_cols: u32,
     pub emoji_pad: u32,
+    // font-wide constants the underline fragment shader needs for its
+    // dotted/undercurl patterns - everything else about an underline's
+    // placement is baked into its instance by the layout stage
+    pub underline_thickness: f32,
+    pub undercurl_amplitude: f32,
 }
 
 struct InstanceBuffer {
@@ -51,6 +57,7 @@ pub struct Buffers {
     glyphs: InstanceBuffer,
     emoji: InstanceBuffer,
     bg: InstanceBuffer,
+    underlines: InstanceBuffer,
     uniform: Buffer,
     uniforms: Uniforms,
     frame: usize,
@@ -107,6 +114,10 @@ impl Buffers {
             glyphs: InstanceBuffer::new::<GlyphInstance>(device, INITIAL_CAPACITY)?,
             emoji: InstanceBuffer::new::<EmojiInstance>(device, EMOJI_INITIAL_CAPACITY)?,
             bg: InstanceBuffer::new::<BgRect>(device, BG_INITIAL_CAPACITY)?,
+            underlines: InstanceBuffer::new::<UnderlineInstance>(
+                device,
+                UNDERLINE_INITIAL_CAPACITY,
+            )?,
             uniform: make_buffer(device, &[uniforms])?,
             uniforms,
             frame: 0,
@@ -127,6 +138,10 @@ impl Buffers {
 
     pub fn emoji_count(&self) -> usize {
         self.emoji.count
+    }
+
+    pub fn underline_count(&self) -> usize {
+        self.underlines.count
     }
 
     pub fn set_screen(&mut self, screen: [f32; 2]) {
@@ -151,12 +166,14 @@ impl Buffers {
         glyphs: &[GlyphInstance],
         emoji: &[EmojiInstance],
         bg: &[BgRect],
+        underlines: &[UnderlineInstance],
     ) -> Result<(), String> {
         self.frame = (self.frame + 1) % FRAMES_IN_FLIGHT;
 
         self.glyphs.upload(device, glyphs, self.frame)?;
         self.emoji.upload(device, emoji, self.frame)?;
-        self.bg.upload(device, bg, self.frame)
+        self.bg.upload(device, bg, self.frame)?;
+        self.underlines.upload(device, underlines, self.frame)
     }
 
     pub fn bind_common(&self, encoder: &ProtocolObject<dyn MTLRenderCommandEncoder>) {
@@ -183,6 +200,16 @@ impl Buffers {
     pub fn bind_bg(&self, encoder: &ProtocolObject<dyn MTLRenderCommandEncoder>) {
         unsafe {
             encoder.setVertexBuffer_offset_atIndex(Some(&self.bg.buffers[self.frame]), 0, 1);
+        }
+    }
+
+    pub fn bind_underlines(&self, encoder: &ProtocolObject<dyn MTLRenderCommandEncoder>) {
+        unsafe {
+            encoder.setVertexBuffer_offset_atIndex(
+                Some(&self.underlines.buffers[self.frame]),
+                0,
+                1,
+            );
         }
     }
 

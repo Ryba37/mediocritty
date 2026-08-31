@@ -280,10 +280,18 @@ impl Font {
         let glyph = Self::glyph_for(inner, 'M').ok_or("glyph M not found")?;
         let cell_width = Self::advance(inner, glyph).ceil() as u32;
 
+        // CoreText reports underline position as a negative offset from the
+        // baseline (y-up); we render y-down, so flip it into "pixels below
+        // the baseline" and floor thickness at 1px so it never disappears
+        let underline_position = (unsafe { -inner.underline_position() } as f32).max(1.0);
+        let underline_thickness = (unsafe { inner.underline_thickness() } as f32).max(1.0);
+
         Ok(Metrics {
             cell_width,
             cell_height,
             ascent: ascent as f32,
+            underline_position,
+            underline_thickness,
         })
     }
 

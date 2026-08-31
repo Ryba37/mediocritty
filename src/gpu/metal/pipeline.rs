@@ -27,6 +27,16 @@ pub fn bg(device: &Device) -> Result<Pipeline, String> {
     build(device, include_str!("bg.metal"), "vs_bg", "fs_bg", false)
 }
 
+pub fn underline(device: &Device) -> Result<Pipeline, String> {
+    build(
+        device,
+        include_str!("underline.metal"),
+        "vs_underline",
+        "fs_underline",
+        true,
+    )
+}
+
 fn build(
     device: &Device,
     source: &str,

@@ -6,7 +6,7 @@ use alacritty_terminal::vte::ansi::{Color, CursorShape, NamedColor};
 
 use crate::color::{indexed, linear};
 use crate::config::Config;
-use crate::font::{FontCache, Glyph};
+use crate::font::{FontCache, Glyph, Metrics};
 
 struct Theme {
     background: [u8; 3],
@@ -65,10 +65,29 @@ pub struct BgRect {
     pub size: [f32; 2],
 }
 
+// style codes must match the fragment-shader defines in underline.metal
+pub const UNDERLINE_STYLE_STRAIGHT: u32 = 0;
+pub const UNDERLINE_STYLE_UNDERCURL: u32 = 1;
+pub const UNDERLINE_STYLE_DOTTED: u32 = 2;
+pub const UNDERLINE_STYLE_DASHED: u32 = 3;
+
+// metal rounds this up to 48 bytes (float4 alignment), so pad explicitly -
+// see the comment on EmojiInstance above
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct UnderlineInstance {
+    pub color: [f32; 4],
+    pub offset: [f32; 2],
+    pub size: [f32; 2],
+    pub style: u32,
+    pub pad: [u32; 3],
+}
+
 pub struct Layout {
     glyphs: Vec<GlyphInstance>,
     emoji: Vec<EmojiInstance>,
     bg: Vec<BgRect>,
+    underlines: Vec<UnderlineInstance>,
     theme: Theme,
 }
 
@@ -76,6 +95,7 @@ pub struct Frame<'a> {
     pub glyphs: &'a [GlyphInstance],
     pub emoji: &'a [EmojiInstance],
     pub bg: &'a [BgRect],
+    pub underlines: &'a [UnderlineInstance],
 }
 
 impl Layout {
@@ -84,6 +104,7 @@ impl Layout {
             glyphs: Vec::new(),
             emoji: Vec::new(),
             bg: Vec::new(),
+            underlines: Vec::new(),
             theme: Theme::from_config(config),
         }
     }
@@ -101,7 +122,9 @@ impl Layout {
         self.glyphs.clear();
         self.emoji.clear();
         self.bg.clear();
+        self.underlines.clear();
 
+        let metrics = cache.metrics();
         let colors = content.colors;
         let window_bg = to_linear(self.theme.background);
         let cursor_point = content.cursor.point;
@@ -150,6 +173,16 @@ impl Layout {
             }
 
             let width = if wide { 2.0 } else { 1.0 };
+
+            let underline_flags = cell.flags & Flags::ALL_UNDERLINES;
+            if !underline_flags.is_empty() {
+                let underline_color = cell
+                    .underline_color()
+                    .map(|c| resolve(c, colors, &self.theme, false, false))
+                    .unwrap_or(fg);
+
+                self.push_underline(underline_flags, underline_color, col, row, width, &metrics);
+            }
 
             if bg != window_bg {
                 self.bg.push(BgRect {
@@ -200,6 +233,55 @@ impl Layout {
             glyphs: &self.glyphs,
             emoji: &self.emoji,
             bg: &self.bg,
+            underlines: &self.underlines,
+        }
+    }
+
+    fn push_underline(
+        &mut self,
+        flags: Flags,
+        color: [f32; 4],
+        col: f32,
+        row: f32,
+        width: f32,
+        metrics: &Metrics,
+    ) {
+        let cell_h = metrics.cell_height as f32;
+        let descent = cell_h - metrics.ascent;
+        let ut = metrics.underline_thickness;
+        let straight_y = metrics.ascent + metrics.underline_position - ut / 2.0;
+
+        let mut push = |y_top: f32, height: f32, style: u32| {
+            let y_top = y_top.min(cell_h - height).max(0.0);
+
+            self.underlines.push(UnderlineInstance {
+                color,
+                offset: [col, row + y_top / cell_h],
+                size: [width, height / cell_h],
+                style,
+                pad: [0; 3],
+            });
+        };
+
+        if flags.contains(Flags::DOUBLE_UNDERLINE) {
+            push(
+                metrics.ascent + 0.25 * descent - ut / 2.0,
+                ut,
+                UNDERLINE_STYLE_STRAIGHT,
+            );
+            push(
+                metrics.ascent + 0.75 * descent - ut / 2.0,
+                ut,
+                UNDERLINE_STYLE_STRAIGHT,
+            );
+        } else if flags.contains(Flags::UNDERCURL) {
+            push(metrics.ascent, descent, UNDERLINE_STYLE_UNDERCURL);
+        } else if flags.contains(Flags::DOTTED_UNDERLINE) {
+            push(metrics.ascent, descent, UNDERLINE_STYLE_DOTTED);
+        } else if flags.contains(Flags::DASHED_UNDERLINE) {
+            push(straight_y, ut, UNDERLINE_STYLE_DASHED);
+        } else if flags.contains(Flags::UNDERLINE) {
+            push(straight_y, ut, UNDERLINE_STYLE_STRAIGHT);
         }
     }
 
