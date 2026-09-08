@@ -32,4 +32,5 @@ dispatch2 = "0.3.1"
 product-name = "Mediocritty"
 identifier = "com.itsfisch.mediocritty"
 category = "DeveloperTools"
+icons = ["assets/mediocritty.icns"]                # icon is temp
 before-packaging-command = "cargo build --release"
