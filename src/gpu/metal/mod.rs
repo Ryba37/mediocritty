@@ -4,7 +4,7 @@ use objc2_metal::{
     MTLLoadAction, MTLPrimitiveType, MTLRenderCommandEncoder, MTLRenderPassDescriptor,
     MTLStoreAction,
 };
-use objc2_quartz_core::CAMetalDrawable;
+use objc2_quartz_core::{CAMetalDrawable, CATransaction};
 use winit::window::Window;
 
 use crate::{
@@ -213,10 +213,15 @@ impl MetalCtx {
                 semaphore.signal();
             });
             cmd.addCompletedHandler(RcBlock::as_ptr(&block));
+
             guard.release();
             cmd.commit();
             cmd.waitUntilScheduled();
+
+            CATransaction::begin();
+            CATransaction::setDisableActions(true);
             drawable.present();
+            CATransaction::commit();
         }
     }
 }
