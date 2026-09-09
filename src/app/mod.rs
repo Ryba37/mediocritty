@@ -146,6 +146,15 @@ impl ApplicationHandler<UserEvent> for App {
                     runtime.set_focused(focused);
                 }
             }
+            WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+    if let Some(runtime) = self.runtime.as_mut() {
+        if let Err(e) = runtime.rebuild_fonts(&self.config, scale_factor) {
+            eprintln!("scale factor change: {e}");
+        } else {
+            runtime.window.request_redraw();
+        }
+    }
+}
             _ => {}
         }
     }

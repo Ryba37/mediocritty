@@ -224,6 +224,10 @@ impl MetalCtx {
             CATransaction::commit();
         }
     }
+
+    pub fn update_metrics(&mut self, metrics: Metrics) {
+        self.buffers.set_metrics(metrics);
+    }
 }
 
 fn linear_background(rgb: [u8; 3]) -> [f32; 3] {

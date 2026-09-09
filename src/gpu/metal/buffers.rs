@@ -3,7 +3,7 @@ use std::ptr::NonNull;
 use objc2::runtime::ProtocolObject;
 use objc2_metal::{MTLBuffer, MTLDevice, MTLRenderCommandEncoder, MTLResourceOptions};
 
-use crate::layout::{BgRect, EmojiInstance, GlyphInstance, UnderlineInstance};
+use crate::{font::Metrics, layout::{BgRect, EmojiInstance, GlyphInstance, UnderlineInstance}};
 
 use super::types::{Buffer, Device};
 
@@ -220,6 +220,13 @@ impl Buffers {
                 .cast::<Uniforms>()
                 .write(self.uniforms);
         }
+    }
+
+    pub fn set_metrics(&mut self, metrics: Metrics) {
+        self.uniforms.cell = [metrics.cell_width as f32, metrics.cell_height as f32];
+        self.uniforms.underline_thickness = metrics.underline_thickness;
+        self.uniforms.undercurl_amplitude = 0.5 * (metrics.cell_height as f32 - metrics.ascent);
+        self.write_uniforms();
     }
 }
 

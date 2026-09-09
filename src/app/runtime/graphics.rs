@@ -6,7 +6,7 @@ use crate::{
     gpu::Renderer,
 };
 
-use super::{grid_size, Runtime};
+use super::{Runtime, grid_size};
 
 impl Runtime {
     pub(super) fn build_graphics(
@@ -57,5 +57,30 @@ impl Runtime {
         }
 
         Ok(fonts)
+    }
+
+    pub(crate) fn rebuild_fonts(&mut self, config: &Config, scale: f64) -> Result<(), String> {
+        let fonts = Self::build_fonts(config, scale)?;
+        let cache = FontCache::new(fonts)?;
+        let metrics = cache.metrics();
+
+        if metrics.cell_width != self.metrics.cell_width
+            || metrics.cell_height != self.metrics.cell_height
+        {
+            let (cols, rows) = grid_size(self.window.inner_size(), metrics);
+
+            self.terminal.resize(
+                cols,
+                rows,
+                metrics.cell_width as u16,
+                metrics.cell_height as u16,
+            );
+        }
+
+        self.renderer.update_metrics(metrics);
+        self.metrics = metrics;
+        self.cache = cache;
+
+        Ok(())
     }
 }
