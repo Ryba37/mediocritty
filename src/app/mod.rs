@@ -1,9 +1,11 @@
 use std::time::{Duration, Instant};
 
+use winit::platform::macos::WindowAttributesExtMacOS;
 use winit::{
     application::ApplicationHandler,
     event::WindowEvent,
     event_loop::{ActiveEventLoop, ControlFlow, EventLoopProxy},
+    platform::macos::OptionAsAlt,
     window::{Window, WindowId},
 };
 
@@ -18,6 +20,7 @@ mod user_event;
 use input::InputState;
 
 pub const DEFAULT_WINDOW_NAME: &'static str = "mediocritty";
+pub const OPTION_AS_ALT: OptionAsAlt = OptionAsAlt::OnlyLeft;
 
 pub struct App {
     runtime: Option<Runtime>,
@@ -75,7 +78,11 @@ impl ApplicationHandler<UserEvent> for App {
         }
 
         let window = event_loop
-            .create_window(Window::default_attributes().with_title(DEFAULT_WINDOW_NAME))
+            .create_window(
+                Window::default_attributes()
+                    .with_title(DEFAULT_WINDOW_NAME)
+                    .with_option_as_alt(OPTION_AS_ALT),
+            )
             .unwrap();
 
         let runtime = match Runtime::new(window, self.proxy.clone(), &self.config) {
@@ -127,7 +134,7 @@ impl ApplicationHandler<UserEvent> for App {
 
             WindowEvent::KeyboardInput { event, .. } => self.on_keyboard_input(event),
 
-            WindowEvent::ModifiersChanged(m) => self.input.modifiers = m.state(),
+            WindowEvent::ModifiersChanged(m) => self.input.modifiers = m,
 
             WindowEvent::MouseWheel { delta, .. } => self.on_mouse_wheel(delta),
 
@@ -147,14 +154,14 @@ impl ApplicationHandler<UserEvent> for App {
                 }
             }
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
-    if let Some(runtime) = self.runtime.as_mut() {
-        if let Err(e) = runtime.rebuild_fonts(&self.config, scale_factor) {
-            eprintln!("scale factor change: {e}");
-        } else {
-            runtime.window.request_redraw();
-        }
-    }
-}
+                if let Some(runtime) = self.runtime.as_mut() {
+                    if let Err(e) = runtime.rebuild_fonts(&self.config, scale_factor) {
+                        eprintln!("scale factor change: {e}");
+                    } else {
+                        runtime.window.request_redraw();
+                    }
+                }
+            }
             _ => {}
         }
     }

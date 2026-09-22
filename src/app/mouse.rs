@@ -14,7 +14,7 @@ use super::App;
 
 impl App {
     fn mouse_mode(&self) -> Option<TermMode> {
-        if self.input.modifiers.shift_key() {
+        if self.input.modifiers.state().shift_key() {
             return None;
         }
 
@@ -30,9 +30,14 @@ impl App {
 
         self.input.reported_cell = Some(cell);
 
-        let Some(bytes) =
-            crate::mouse::encode(button, self.input.modifiers, cell.0, cell.1, pressed, mode)
-        else {
+        let Some(bytes) = crate::mouse::encode(
+            button,
+            self.input.modifiers.state(),
+            cell.0,
+            cell.1,
+            pressed,
+            mode,
+        ) else {
             return;
         };
 

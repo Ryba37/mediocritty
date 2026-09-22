@@ -1,58 +1,49 @@
 use alacritty_terminal::index::{Column, Line, Point, Side};
 use alacritty_terminal::term::TermMode;
-use winit::event::{ElementState, KeyEvent, MouseScrollDelta};
-use winit::keyboard::{Key, ModifiersState, NamedKey};
+use winit::event::{ElementState, KeyEvent, Modifiers, MouseScrollDelta};
+use winit::keyboard::{Key, KeyCode, ModifiersKeyState, NamedKey, PhysicalKey};
+use winit::platform::macos::OptionAsAlt;
 use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
 
 pub fn key_to_bytes(
     event: &KeyEvent,
-    modifiers: ModifiersState,
+    mods: &Modifiers,
     mode: TermMode,
+    option_as_alt: OptionAsAlt,
 ) -> Option<Vec<u8>> {
     if event.state != ElementState::Pressed {
         return None;
     }
 
-    if let Key::Named(NamedKey::Tab) = event.logical_key
-        && modifiers.shift_key()
-    {
-        return Some(b"\x1b[Z".to_vec());
-    }
+    let state = mods.state();
 
-    if let Key::Named(named) = event.logical_key
-        && let Some(bytes) = app_cursor_key(&named, mode)
-    {
-        return Some(bytes);
-    }
-
-    if let Some(bytes) = named_key(&event.logical_key) {
-        return Some(bytes);
-    }
-
-    let bare = event.key_without_modifiers();
-
-    if modifiers.control_key()
-        && let Key::Character(s) = &bare
-        && let Some(byte) = control_byte(s)
-    {
-        return Some(vec![byte]);
-    }
-
-    if modifiers.alt_key()
-        && let Key::Character(s) = &bare
-    {
-        let mut bytes = vec![0x1b];
-        bytes.extend_from_slice(s.as_bytes());
-        return Some(bytes);
-    }
-
-    let text = event.text.as_ref()?;
-
-    if text.is_empty() {
+    if state.super_key() {
         return None;
     }
 
-    Some(text.as_bytes().to_vec())
+    let shift = state.shift_key();
+    let ctrl = state.control_key();
+    let alt = alt_sends_esc(mods, option_as_alt);
+
+    if let Key::Named(named) = &event.logical_key
+        && let Some(bytes) = named_key(*named, shift, ctrl, alt, mode)
+    {
+        return Some(bytes);
+    }
+
+    if ctrl && let Some(b) = ctrl_byte(event) {
+        return Some(if alt { vec![0x1b, b] } else { vec![b] });
+    }
+
+    let text = event.text.as_deref().filter(|t| !t.is_empty())?;
+
+    let mut out = Vec::with_capacity(text.len() + alt as usize);
+    if alt {
+        out.push(0x1b);
+    }
+    out.extend_from_slice(text.as_bytes());
+
+    Some(out)
 }
 
 pub fn scroll_delta_to_lines(
@@ -109,64 +100,140 @@ pub fn point_from_pixels(
     (Point::new(Line(line), Column(column)), side)
 }
 
-fn named_key(key: &Key) -> Option<Vec<u8>> {
-    let Key::Named(named) = key else {
-        return None;
+fn alt_sends_esc(mods: &Modifiers, opt: OptionAsAlt) -> bool {
+    let l = mods.lalt_state() == ModifiersKeyState::Pressed;
+    let r = mods.ralt_state() == ModifiersKeyState::Pressed;
+
+    match opt {
+        OptionAsAlt::OnlyLeft => l,
+        OptionAsAlt::OnlyRight => r,
+        OptionAsAlt::Both => l || r,
+        OptionAsAlt::None => false,
+    }
+}
+
+fn named_key(key: NamedKey, shift: bool, ctrl: bool, alt: bool, mode: TermMode) -> Option<Vec<u8>> {
+    // xterm: 1 + shift + alt*2 + ctrl*4
+    let m = 1 + shift as u8 + alt as u8 * 2 + ctrl as u8 * 4;
+
+    let letter = match key {
+        NamedKey::ArrowUp => Some(b'A'),
+        NamedKey::ArrowDown => Some(b'B'),
+        NamedKey::ArrowRight => Some(b'C'),
+        NamedKey::ArrowLeft => Some(b'D'),
+        NamedKey::Home => Some(b'H'),
+        NamedKey::End => Some(b'F'),
+        _ => None,
     };
 
-    let bytes = match named {
-        NamedKey::Enter => vec![b'\r'],
-        NamedKey::Backspace => vec![0x7f],
-        NamedKey::Tab => vec![b'\t'],
-        NamedKey::Escape => vec![0x1b],
-        NamedKey::ArrowUp => b"\x1b[A".to_vec(),
-        NamedKey::ArrowDown => b"\x1b[B".to_vec(),
-        NamedKey::ArrowRight => b"\x1b[C".to_vec(),
-        NamedKey::ArrowLeft => b"\x1b[D".to_vec(),
-        NamedKey::Home => b"\x1b[H".to_vec(),
-        NamedKey::End => b"\x1b[F".to_vec(),
-        NamedKey::PageUp => b"\x1b[5~".to_vec(),
-        NamedKey::PageDown => b"\x1b[6~".to_vec(),
-        NamedKey::Delete => b"\x1b[3~".to_vec(),
-        NamedKey::Insert => b"\x1b[2~".to_vec(),
+    if let Some(c) = letter {
+        return Some(if m > 1 {
+            vec![0x1b, b'[', b'1', b';', b'0' + m, c]
+        } else if mode.contains(TermMode::APP_CURSOR) {
+            vec![0x1b, b'O', c]
+        } else {
+            vec![0x1b, b'[', c]
+        });
+    }
+
+    let num = match key {
+        NamedKey::Insert => Some(b'2'),
+        NamedKey::Delete => Some(b'3'),
+        NamedKey::PageUp => Some(b'5'),
+        NamedKey::PageDown => Some(b'6'),
+        _ => None,
+    };
+
+    if let Some(n) = num {
+        return Some(if m > 1 {
+            vec![0x1b, b'[', n, b';', b'0' + m, b'~']
+        } else {
+            vec![0x1b, b'[', n, b'~']
+        });
+    }
+
+    let base: &[u8] = match key {
+        NamedKey::Enter if mode.contains(TermMode::LINE_FEED_NEW_LINE) => b"\r\n",
+        NamedKey::Enter => b"\r",
+        NamedKey::Backspace if ctrl => b"\x08",
+        NamedKey::Backspace => b"\x7f",
+        NamedKey::Tab if shift => return Some(b"\x1b[Z".to_vec()),
+        NamedKey::Tab => b"\t",
+        NamedKey::Escape => b"\x1b",
+        NamedKey::Space if ctrl => b"\0",
+        NamedKey::Space if alt => b" ",
         _ => return None,
     };
 
-    Some(bytes)
+    let mut out = Vec::with_capacity(base.len() + alt as usize);
+    if alt {
+        out.push(0x1b);
+    }
+    out.extend_from_slice(base);
+
+    Some(out)
 }
 
-fn control_byte(s: &str) -> Option<u8> {
-    let mut chars = s.chars();
-    let ch = chars.next()?;
-
-    if chars.next().is_some() {
-        return None;
+fn ctrl_byte(event: &KeyEvent) -> Option<u8> {
+    let ch = match event.key_without_modifiers() {
+        Key::Character(s) => single_ascii(&s),
+        _ => None,
     }
+    // non latin layout, using physical key
+    .or_else(|| physical_char(event.physical_key))?;
 
-    if !ch.is_ascii() {
-        return None;
-    }
-
-    let byte = ch as u8;
-
-    match byte {
-        b'a'..=b'z' | b'A'..=b'Z' | b'[' | b'\\' | b']' | b'^' | b'_' => Some(byte & 0x1f),
+    match ch {
+        b'a'..=b'z' | b'A'..=b'Z' | b'[' | b'\\' | b']' | b'^' | b'_' => Some(ch & 0x1f),
         b'?' => Some(0x7f),
-        b' ' | b'@' => Some(0),
+        b'@' => Some(0),
         _ => None,
     }
 }
 
-fn app_cursor_key(named: &NamedKey, mode: TermMode) -> Option<Vec<u8>> {
-    if !mode.contains(TermMode::APP_CURSOR) {
-        return None;
+fn single_ascii(s: &str) -> Option<u8> {
+    match s.as_bytes() {
+        [b] => Some(*b),
+        _ => None,
     }
-    let bytes = match named {
-        NamedKey::ArrowUp => b"\x1bOA".to_vec(),
-        NamedKey::ArrowDown => b"\x1bOB".to_vec(),
-        NamedKey::ArrowRight => b"\x1bOC".to_vec(),
-        NamedKey::ArrowLeft => b"\x1bOD".to_vec(),
-        _ => return None,
+}
+
+fn physical_char(key: PhysicalKey) -> Option<u8> {
+    use KeyCode::*;
+
+    let PhysicalKey::Code(code) = key else {
+        return None;
     };
-    Some(bytes)
+
+    Some(match code {
+        KeyA => b'a',
+        KeyB => b'b',
+        KeyC => b'c',
+        KeyD => b'd',
+        KeyE => b'e',
+        KeyF => b'f',
+        KeyG => b'g',
+        KeyH => b'h',
+        KeyI => b'i',
+        KeyJ => b'j',
+        KeyK => b'k',
+        KeyL => b'l',
+        KeyM => b'm',
+        KeyN => b'n',
+        KeyO => b'o',
+        KeyP => b'p',
+        KeyQ => b'q',
+        KeyR => b'r',
+        KeyS => b's',
+        KeyT => b't',
+        KeyU => b'u',
+        KeyV => b'v',
+        KeyW => b'w',
+        KeyX => b'x',
+        KeyY => b'y',
+        KeyZ => b'z',
+        BracketLeft => b'[',
+        Backslash => b'\\',
+        BracketRight => b']',
+        _ => return None,
+    })
 }

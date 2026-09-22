@@ -1,12 +1,12 @@
 use std::time::{Duration, Instant};
 
 use alacritty_terminal::index::{Point, Side};
-use winit::{dpi::PhysicalPosition, keyboard::ModifiersState};
+use winit::{dpi::PhysicalPosition, event::Modifiers};
 
 use super::App;
 
 pub(super) struct InputState {
-    pub(super) modifiers: ModifiersState,
+    pub(super) modifiers: Modifiers,
     pub(super) scroll_accum: f64,
     pub(super) mouse_pos: PhysicalPosition<f64>,
     pub(super) buttons: u8,
@@ -21,7 +21,7 @@ pub(super) struct InputState {
 impl InputState {
     pub(super) fn new() -> Self {
         Self {
-            modifiers: ModifiersState::default(),
+            modifiers: Modifiers::default(),
             scroll_accum: 0.0,
             mouse_pos: PhysicalPosition::new(0.0, 0.0),
             buttons: 0,
