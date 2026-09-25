@@ -126,10 +126,6 @@ impl ApplicationHandler<UserEvent> for App {
                 }
 
                 self.redraw();
-
-                if let Some(runtime) = self.runtime.as_ref() {
-                    runtime.window.request_redraw();
-                }
             }
 
             WindowEvent::KeyboardInput { event, .. } => self.on_keyboard_input(event),

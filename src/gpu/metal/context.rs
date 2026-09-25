@@ -1,8 +1,10 @@
+use objc2::msg_send;
 use objc2::rc::Retained;
 use objc2_app_kit::NSView;
 use objc2_core_foundation::CGSize;
+use objc2_foundation::{NSDictionary, NSNull, NSString};
 use objc2_metal::MTLDevice;
-use objc2_quartz_core::{CAMetalLayer, CATransaction};
+use objc2_quartz_core::{CAMetalLayer, CATransaction, kCAGravityTopLeft};
 use winit::dpi::PhysicalSize;
 use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use winit::window::Window;
@@ -47,8 +49,6 @@ impl Context {
 
     pub fn resize(&self, width: u32, height: u32, scale_factor: f64) {
         self.layer.setContentsScale(scale_factor);
-        CATransaction::begin();
-        CATransaction::setDisableActions(true);
         self.layer
             .setDrawableSize(CGSize::new(width as f64, height as f64));
         CATransaction::commit();
@@ -63,6 +63,25 @@ impl Context {
         layer.setDevice(Some(device));
         layer.setPixelFormat(PIXEL_FORMAT);
         layer.setPresentsWithTransaction(true);
+
+        unsafe {
+            layer.setContentsGravity(kCAGravityTopLeft);
+        }
+
+        let keys = [
+            "bounds",
+            "position",
+            "frame",
+            "contents",
+            "contentsScale",
+            "anchorPoint",
+        ]
+        .map(NSString::from_str);
+        let key_refs: Vec<&NSString> = keys.iter().map(|k| &**k).collect();
+        let nulls: Vec<_> = (0..keys.len()).map(|_| NSNull::null()).collect();
+        let actions = NSDictionary::from_retained_objects(&key_refs, &nulls);
+        // NSNull in actions = "no animation for this key"
+        let _: () = unsafe { msg_send![&*layer, setActions: &*actions] };
 
         let view = Self::view_of(window);
         view.setLayer(Some(&layer));

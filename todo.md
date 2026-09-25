@@ -1,4 +1,3 @@
-## project's todo
+## project's known issues
 
-- refactor boxdraw.rs
-- uniform buffer is written without frame sync, benign for now
+no known issues yet

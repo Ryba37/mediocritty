@@ -3,7 +3,10 @@ use std::ptr::NonNull;
 use objc2::runtime::ProtocolObject;
 use objc2_metal::{MTLBuffer, MTLDevice, MTLRenderCommandEncoder, MTLResourceOptions};
 
-use crate::{font::Metrics, layout::{BgRect, EmojiInstance, GlyphInstance, UnderlineInstance}};
+use crate::{
+    font::Metrics,
+    layout::{BgRect, EmojiInstance, GlyphInstance, UnderlineInstance},
+};
 
 use super::types::{Buffer, Device};
 
@@ -58,7 +61,6 @@ pub struct Buffers {
     emoji: InstanceBuffer,
     bg: InstanceBuffer,
     underlines: InstanceBuffer,
-    uniform: Buffer,
     uniforms: Uniforms,
     frame: usize,
 }
@@ -118,7 +120,6 @@ impl Buffers {
                 device,
                 UNDERLINE_INITIAL_CAPACITY,
             )?,
-            uniform: make_buffer(device, &[uniforms])?,
             uniforms,
             frame: 0,
         })
@@ -146,18 +147,15 @@ impl Buffers {
 
     pub fn set_screen(&mut self, screen: [f32; 2]) {
         self.uniforms.screen = screen;
-        self.write_uniforms();
     }
 
     pub fn set_atlas(&mut self, atlas: [f32; 2]) {
         self.uniforms.atlas = atlas;
-        self.write_uniforms();
     }
 
     pub fn set_emoji_atlas(&mut self, atlas: [f32; 2], cols: u32) {
         self.uniforms.emoji_atlas = atlas;
         self.uniforms.emoji_cols = cols;
-        self.write_uniforms();
     }
 
     pub fn upload(
@@ -177,11 +175,12 @@ impl Buffers {
     }
 
     pub fn bind_common(&self, encoder: &ProtocolObject<dyn MTLRenderCommandEncoder>) {
+        let ptr = NonNull::from(&self.uniforms).cast();
+        let len = size_of::<Uniforms>();
         unsafe {
             encoder.setVertexBuffer_offset_atIndex(Some(&self.vertex), 0, 0);
-            encoder.setVertexBuffer_offset_atIndex(Some(&self.uniform), 0, 3);
-            // the glyph shader reads gamma/contrast in the fragment stage
-            encoder.setFragmentBuffer_offset_atIndex(Some(&self.uniform), 0, 3);
+            encoder.setVertexBytes_length_atIndex(ptr, len, 3);
+            encoder.setFragmentBytes_length_atIndex(ptr, len, 3);
         }
     }
 
@@ -213,20 +212,10 @@ impl Buffers {
         }
     }
 
-    fn write_uniforms(&self) {
-        unsafe {
-            self.uniform
-                .contents()
-                .cast::<Uniforms>()
-                .write(self.uniforms);
-        }
-    }
-
     pub fn set_metrics(&mut self, metrics: Metrics) {
         self.uniforms.cell = [metrics.cell_width as f32, metrics.cell_height as f32];
         self.uniforms.underline_thickness = metrics.underline_thickness;
         self.uniforms.undercurl_amplitude = 0.5 * (metrics.cell_height as f32 - metrics.ascent);
-        self.write_uniforms();
     }
 }
 

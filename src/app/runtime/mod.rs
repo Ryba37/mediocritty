@@ -65,6 +65,10 @@ impl Runtime {
     }
 
     pub(crate) fn resize(&mut self, size: PhysicalSize<u32>) {
+        if size.width == 0 || size.height == 0 {
+            return;
+        }
+
         let scale = self.window.scale_factor();
 
         self.renderer.resize(size.width, size.height, scale);
