@@ -54,35 +54,32 @@ impl AtlasTexture {
     }
 
     fn upload(&self, atlas: &Atlas, dirty: &[u32]) {
+        let cols = atlas.cols();
+        let (lo, hi) = dirty.iter().fold((u32::MAX, 0), |(lo, hi), &n| {
+            (lo.min(n / cols), hi.max(n / cols))
+        });
+
+        let (_, y, _, cell_h) = atlas.cell_rect(lo * cols);
         let row = atlas.row_bytes() as usize;
-        let bpp = atlas.bpp() as usize;
-        let data = atlas.data();
 
-        debug_assert_eq!(data.len(), row * atlas.height() as usize);
+        let region = MTLRegion {
+            origin: MTLOrigin {
+                x: 0,
+                y: y as usize,
+                z: 0,
+            },
+            size: MTLSize {
+                width: atlas.width() as usize,
+                height: ((hi - lo + 1) * cell_h) as usize,
+                depth: 1,
+            },
+        };
 
-        for &n in dirty {
-            let (x, y, w, h) = atlas.cell_rect(n);
+        let ptr = NonNull::from(&atlas.data()[y as usize * row]).cast();
 
-            let region = MTLRegion {
-                origin: MTLOrigin {
-                    x: x as usize,
-                    y: y as usize,
-                    z: 0,
-                },
-                size: MTLSize {
-                    width: w as usize,
-                    height: h as usize,
-                    depth: 1,
-                },
-            };
-
-            let offset = y as usize * row + x as usize * bpp;
-            let ptr = NonNull::from(&data[offset]).cast();
-
-            unsafe {
-                self.texture
-                    .replaceRegion_mipmapLevel_withBytes_bytesPerRow(region, 0, ptr, row);
-            }
+        unsafe {
+            self.texture
+                .replaceRegion_mipmapLevel_withBytes_bytesPerRow(region, 0, ptr, row);
         }
     }
 
