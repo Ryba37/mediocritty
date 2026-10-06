@@ -134,7 +134,15 @@ impl Config {
         let Some(path) = Self::path() else {
             return;
         };
-        let Some(dir) = path.parent().map(Path::to_path_buf) else {
+
+        // stow and friends leave a symlink here, and fsevents only ever reports
+        // the real location, so watch that instead
+        let real = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+
+        let Some(dir) = real.parent().map(Path::to_path_buf) else {
+            return;
+        };
+        let Some(name) = real.file_name().map(std::ffi::OsString::from) else {
             return;
         };
 
@@ -161,7 +169,11 @@ impl Config {
             }
 
             while let Ok(event) = rx.recv() {
-                if !event.paths.iter().any(|p| p == &path) {
+                if !event
+                    .paths
+                    .iter()
+                    .any(|p| p.file_name() == Some(name.as_os_str()))
+                {
                     continue;
                 }
 

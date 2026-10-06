@@ -64,7 +64,7 @@ impl MetalCtx {
             atlas: [atlas.width() as f32, atlas.height() as f32],
             cols: atlas.cols(),
             pad: 0,
-            gamma: config.font.gamma.max(0.01),
+            gamma: 1.0 / config.font.gamma.max(0.01),
             contrast: 1.0 + config.font.contrast.clamp(0.0, 100.0) * 0.01,
             emoji_atlas: [emoji.width() as f32, emoji.height() as f32],
             emoji_cols: emoji.cols(),
