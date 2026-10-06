@@ -1,13 +1,16 @@
 use objc2::msg_send;
 use objc2::rc::Retained;
-use objc2_app_kit::NSView;
+use objc2_app_kit::{NSColor, NSView};
 use objc2_core_foundation::CGSize;
+use objc2_core_graphics::CGColor;
 use objc2_foundation::{NSDictionary, NSNull, NSString};
 use objc2_metal::MTLDevice;
 use objc2_quartz_core::{CAMetalLayer, CATransaction, kCAGravityTopLeft};
 use winit::dpi::PhysicalSize;
 use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use winit::window::Window;
+
+use crate::color::HexColor;
 
 use super::types::{Device, PIXEL_FORMAT, Queue};
 
@@ -18,7 +21,7 @@ pub struct Context {
 }
 
 impl Context {
-    pub fn new(window: &Window) -> Result<Self, String> {
+    pub fn new(window: &Window, bg: HexColor) -> Result<Self, String> {
         let device = objc2_metal::MTLCreateSystemDefaultDevice()
             .ok_or_else(|| "metal device not found".to_string())?;
 
@@ -27,6 +30,19 @@ impl Context {
             .ok_or_else(|| "couldn't create queue".to_string())?;
 
         let layer = Self::create_layer(&device, window, window.inner_size());
+
+        // setting bg color for default winit window
+        let [r, g, b] = bg.0.map(|c| c as f64 / 255.0);
+        let color = CGColor::new_srgb(r, g, b, 1.0);
+        layer.setBackgroundColor(Some(&color));
+
+        if let Ok(RawWindowHandle::AppKit(h)) = window.window_handle().map(|h| h.as_raw()) {
+            let view: &NSView = unsafe { h.ns_view.cast().as_ref() };
+            if let Some(ns_window) = view.window() {
+                let ns_color = NSColor::colorWithSRGBRed_green_blue_alpha(r, g, b, 1.0);
+                ns_window.setBackgroundColor(Some(&ns_color));
+            }
+        }
 
         Ok(Self {
             device,

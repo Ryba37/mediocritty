@@ -51,7 +51,7 @@ impl MetalCtx {
         emoji: &Atlas,
         config: &Config,
     ) -> Result<Self, String> {
-        let context = Context::new(window)?;
+        let context = Context::new(window, config.theme.background)?;
         let glyph_pipeline = pipeline::glyph(context.device())?;
         let emoji_pipeline = pipeline::emoji(context.device())?;
         let bg_pipeline = pipeline::bg(context.device())?;
