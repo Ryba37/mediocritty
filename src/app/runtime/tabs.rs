@@ -85,6 +85,8 @@ impl Runtime {
             self.resize_tabs(self.window.inner_size(), self.metrics);
         }
 
+        self.focus_tab(self.active, self.focused);
+
         self.sync_title();
         self.window.request_redraw();
 
@@ -129,7 +131,12 @@ impl Runtime {
             return;
         }
 
+        let old = self.active;
         self.active = index;
+
+        self.focus_tab(old, false);
+        self.focus_tab(index, self.focused);
+
         self.sync_title();
         self.window.request_redraw();
     }

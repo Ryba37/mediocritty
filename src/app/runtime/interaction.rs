@@ -23,8 +23,23 @@ impl Runtime {
         }
     }
 
+    // the window gained or lost focus
     pub(crate) fn set_focused(&mut self, focused: bool) {
-        let mut term = self.terminal().term().lock();
+        self.focused = focused;
+        self.focus_tab(self.active, focused);
+        self.window.request_redraw();
+    }
+
+    // tells one tab whether it has the keyboard, and reports it to the
+    // program if it asked for focus events
+    pub(super) fn focus_tab(&self, index: usize, focused: bool) {
+        let terminal = &self.tabs[index].terminal;
+        let mut term = terminal.term().lock();
+
+        if term.is_focused == focused {
+            return;
+        }
+
         term.is_focused = focused;
 
         let report = term.mode().contains(TermMode::FOCUS_IN_OUT);
@@ -32,13 +47,11 @@ impl Runtime {
         drop(term);
 
         if report {
-            self.terminal().write(if focused {
+            terminal.write(if focused {
                 b"\x1b[I".to_vec()
             } else {
                 b"\x1b[O".to_vec()
             });
         }
-
-        self.window.request_redraw();
     }
 }

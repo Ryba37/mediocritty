@@ -34,6 +34,7 @@ pub(crate) struct Runtime {
     pub(crate) active: usize,
     proxy: EventLoopProxy<UserEvent>,
     next_id: u32,
+    focused: bool,
 }
 
 impl Runtime {
@@ -63,6 +64,7 @@ impl Runtime {
             active: 0,
             proxy,
             next_id: 1,
+            focused: false,
         })
     }
 
