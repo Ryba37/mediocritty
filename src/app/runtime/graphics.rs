@@ -6,7 +6,7 @@ use crate::{
     gpu::Renderer,
 };
 
-use super::{Runtime, grid_size};
+use super::Runtime;
 
 impl Runtime {
     pub(super) fn build_graphics(
@@ -27,14 +27,7 @@ impl Runtime {
         if metrics.cell_width != self.metrics.cell_width
             || metrics.cell_height != self.metrics.cell_height
         {
-            let (cols, rows) = grid_size(self.window.inner_size(), metrics);
-
-            self.terminal.resize(
-                cols,
-                rows,
-                metrics.cell_width as u16,
-                metrics.cell_height as u16,
-            );
+            self.resize_tabs(self.window.inner_size(), metrics);
         }
 
         self.metrics = metrics;
@@ -67,14 +60,7 @@ impl Runtime {
         if metrics.cell_width != self.metrics.cell_width
             || metrics.cell_height != self.metrics.cell_height
         {
-            let (cols, rows) = grid_size(self.window.inner_size(), metrics);
-
-            self.terminal.resize(
-                cols,
-                rows,
-                metrics.cell_width as u16,
-                metrics.cell_height as u16,
-            );
+            self.resize_tabs(self.window.inner_size(), metrics);
         }
 
         self.renderer.update_metrics(metrics);

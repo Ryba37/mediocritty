@@ -18,7 +18,7 @@ impl App {
             return None;
         }
 
-        let mode = self.runtime()?.terminal.mode();
+        let mode = self.runtime()?.terminal().mode();
 
         mode.intersects(TermMode::MOUSE_MODE).then_some(mode)
     }
@@ -42,7 +42,7 @@ impl App {
         };
 
         if let Some(runtime) = self.runtime() {
-            runtime.terminal.write(bytes);
+            runtime.terminal().write(bytes);
         }
     }
 
@@ -71,7 +71,7 @@ impl App {
         }
 
         if let Some(runtime) = self.runtime_mut() {
-            runtime.terminal.scroll(lines);
+            runtime.terminal_mut().scroll(lines);
             runtime.window.request_redraw();
         }
     }
@@ -95,7 +95,7 @@ impl App {
         };
 
         if let Some(runtime) = self.runtime_mut() {
-            runtime.terminal.update_selection(point, side);
+            runtime.terminal_mut().update_selection(point, side);
             runtime.window.request_redraw();
         }
     }
@@ -146,7 +146,7 @@ impl App {
             self.input.autoscroll_at = None;
 
             if pressed && let Some(runtime) = self.runtime_mut() {
-                runtime.terminal.clear_selection();
+                runtime.terminal_mut().clear_selection();
                 runtime.window.request_redraw();
             }
 
@@ -165,6 +165,17 @@ impl App {
             return;
         }
 
+        if button == MouseButton::Left {
+            if pressed && self.click_tab() {
+                self.input.bar_click = true;
+                return;
+            }
+
+            if !pressed && std::mem::take(&mut self.input.bar_click) {
+                return;
+            }
+        }
+
         let Some((point, side)) = self.point_under_mouse() else {
             return;
         };
@@ -181,7 +192,7 @@ impl App {
 
         if let Some(runtime) = self.runtime_mut() {
             runtime
-                .terminal
+                .terminal_mut()
                 .start_selection(Selection::new(selection_type, point, side));
 
             runtime.window.request_redraw();
@@ -215,6 +226,20 @@ impl App {
             .then(|| Instant::now() + Duration::from_millis(self.config.autoscroll_interval_ms));
     }
 
+    fn click_tab(&mut self) -> bool {
+        let pos = self.input.mouse_pos;
+
+        let Some(runtime) = self.runtime_mut() else {
+            return false;
+        };
+        let Some(index) = runtime.tab_at(pos.x, pos.y) else {
+            return false;
+        };
+
+        runtime.select_tab(index);
+        true
+    }
+
     pub(super) fn autoscroll_tick(&mut self) -> bool {
         let lines = self.autoscroll_lines();
 
@@ -223,7 +248,7 @@ impl App {
         }
 
         if let Some(runtime) = self.runtime_mut() {
-            runtime.terminal.scroll(lines);
+            runtime.terminal_mut().scroll(lines);
         }
 
         let Some((point, side)) = self.point_under_mouse() else {
@@ -231,7 +256,7 @@ impl App {
         };
 
         if let Some(runtime) = self.runtime_mut() {
-            runtime.terminal.update_selection(point, side);
+            runtime.terminal_mut().update_selection(point, side);
             runtime.window.request_redraw();
         }
 

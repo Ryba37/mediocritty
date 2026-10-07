@@ -16,6 +16,7 @@ pub(super) struct InputState {
     last_click: Option<(Instant, Point)>,
     click_count: u8,
     pub(super) focused: bool,
+    pub(super) bar_click: bool,
 }
 
 impl InputState {
@@ -31,6 +32,7 @@ impl InputState {
             last_click: None,
             click_count: 0,
             focused: true,
+            bar_click: false,
         }
     }
 
@@ -55,13 +57,14 @@ impl InputState {
         self.buttons = 0;
         self.selecting = false;
         self.autoscroll_at = None;
+        self.bar_click = false;
     }
 }
 
 impl App {
     pub(super) fn point_under_mouse(&self) -> Option<(Point, Side)> {
         let runtime = self.runtime()?;
-        let (display_offset, columns, screen_lines) = runtime.terminal.viewport();
+        let (display_offset, columns, screen_lines) = runtime.terminal().viewport();
 
         Some(crate::input::point_from_pixels(
             self.input.mouse_pos.x,
@@ -76,7 +79,7 @@ impl App {
 
     pub(super) fn cell_under_mouse(&self) -> Option<(usize, usize)> {
         let runtime = self.runtime()?;
-        let (_, columns, screen_lines) = runtime.terminal.viewport();
+        let (_, columns, screen_lines) = runtime.terminal().viewport();
 
         Some(crate::input::cell_from_pixels(
             self.input.mouse_pos.x,

@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::thread::JoinHandle;
 
 use alacritty_terminal::{
@@ -16,7 +16,7 @@ use alacritty_terminal::{
 mod event;
 mod size;
 
-pub use event::{EventProxy, UserEvent};
+pub use event::{EventProxy, TabId, UserEvent};
 pub use size::TermSize;
 
 const DEFAULT_LOCALE: &str = "en_US.UTF-8";
@@ -49,6 +49,7 @@ impl Terminal {
         };
 
         let mut options = tty::Options::default();
+        options.working_directory = std::env::var_os("HOME").map(std::path::PathBuf::from);
 
         let candidate = locale_cfg.unwrap_or_else(system_locale);
         let locale = if locale_available(&candidate) {
@@ -161,25 +162,46 @@ impl Drop for Terminal {
     }
 }
 
+// both of these shell out, which is fine once at startup and a visible
+// hitch on every new tab, so the answers are kept for the life of the process
+
 #[cfg(target_os = "macos")]
 fn system_locale() -> String {
-    std::process::Command::new("defaults")
-        .args(["read", "-g", "AppleLocale"])
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .map(|s| format!("{s}.UTF-8"))
-        .unwrap_or_else(|| "en_US.UTF-8".into())
+    static CACHE: OnceLock<String> = OnceLock::new();
+
+    CACHE
+        .get_or_init(|| {
+            std::process::Command::new("defaults")
+                .args(["read", "-g", "AppleLocale"])
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .and_then(|o| String::from_utf8(o.stdout).ok())
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .map(|s| format!("{s}.UTF-8"))
+                .unwrap_or_else(|| "en_US.UTF-8".into())
+        })
+        .clone()
 }
 
 #[cfg(target_os = "macos")]
 fn locale_available(loc: &str) -> bool {
-    std::process::Command::new("locale")
-        .arg("-a")
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).lines().any(|l| l == loc))
-        .unwrap_or(false)
+    static CACHE: OnceLock<Vec<String>> = OnceLock::new();
+
+    CACHE
+        .get_or_init(|| {
+            std::process::Command::new("locale")
+                .arg("-a")
+                .output()
+                .map(|o| {
+                    String::from_utf8_lossy(&o.stdout)
+                        .lines()
+                        .map(String::from)
+                        .collect()
+                })
+                .unwrap_or_default()
+        })
+        .iter()
+        .any(|l| l == loc)
 }

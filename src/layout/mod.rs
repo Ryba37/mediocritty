@@ -7,6 +7,9 @@ use alacritty_terminal::vte::ansi::{Color, CursorShape, NamedColor};
 use crate::color::{indexed, linear};
 use crate::config::Config;
 use crate::font::{FontCache, Glyph, Metrics};
+use std::fmt::Write;
+
+const TAB_MAX_WIDTH: usize = 24;
 
 struct Theme {
     background: [u8; 3],
@@ -89,6 +92,7 @@ pub struct Layout {
     bg: Vec<BgRect>,
     underlines: Vec<UnderlineInstance>,
     theme: Theme,
+    label: String,
 }
 
 pub struct Frame<'a> {
@@ -106,6 +110,7 @@ impl Layout {
             bg: Vec::new(),
             underlines: Vec::new(),
             theme: Theme::from_config(config),
+            label: String::from(""),
         }
     }
 
@@ -229,6 +234,10 @@ impl Layout {
             self.push_cursor(shape, cursor_point);
         }
 
+        self.frame()
+    }
+
+    pub fn frame(&self) -> Frame<'_> {
         Frame {
             glyphs: &self.glyphs,
             emoji: &self.emoji,
@@ -282,6 +291,81 @@ impl Layout {
             push(straight_y, ut, UNDERLINE_STYLE_DASHED);
         } else if flags.contains(Flags::UNDERLINE) {
             push(straight_y, ut, UNDERLINE_STYLE_STRAIGHT);
+        }
+    }
+
+    // one row of equal-width tabs right under the grid. call after build, it
+    // appends to the same frame
+    pub fn push_tab_bar<'a>(
+        &mut self,
+        cache: &mut FontCache,
+        tabs: impl ExactSizeIterator<Item = (&'a str, bool)>,
+        row: usize,
+        cols: usize,
+    ) {
+        let width = tab_width(cols, tabs.len());
+
+        if width == 0 {
+            return;
+        }
+
+        let window_bg = to_linear(self.theme.background);
+        let active_bg = to_linear(self.theme.foreground);
+        let inactive_fg = to_linear(dim(self.theme.foreground, self.theme.dim_strength));
+        let row = row as f32;
+
+        // the last cell of a tab stays empty so neighbours don't touch
+        let room = width - 1;
+
+        for (i, (title, active)) in tabs.enumerate() {
+            let start = (i * width) as f32;
+
+            let (fg, bg, style) = if active {
+                (window_bg, active_bg, 1)
+            } else {
+                (inactive_fg, window_bg, 0)
+            };
+
+            if active {
+                self.bg.push(BgRect {
+                    color: bg,
+                    offset: [start, row],
+                    size: [width as f32, 1.0],
+                });
+            }
+
+            self.label.clear();
+            let _ = write!(self.label, " {}: {title}", i + 1);
+
+            let len = self.label.chars().count();
+
+            for (k, ch) in self.label.chars().take(room).enumerate() {
+                let ch = if len > room && k == room - 1 {
+                    '…'
+                } else {
+                    ch
+                };
+
+                if ch == ' ' {
+                    continue;
+                }
+
+                let offset = [start + k as f32, row];
+
+                match cache.get_or_insert(ch, false, style) {
+                    Glyph::Mask(n) => self.glyphs.push(GlyphInstance {
+                        color: fg,
+                        offset,
+                        cell: n,
+                        gamma_mix: gamma_mix(fg, bg),
+                    }),
+                    Glyph::Color(n) => self.emoji.push(EmojiInstance {
+                        offset,
+                        cell: n,
+                        pad: 0,
+                    }),
+                }
+            }
         }
     }
 
@@ -409,4 +493,8 @@ fn resolve_index(color: u8, is_bright: bool, is_dim: bool) -> (u8, bool) {
     }
 
     (color, false)
+}
+
+pub fn tab_width(cols: usize, count: usize) -> usize {
+    cols / count.max(1).min(TAB_MAX_WIDTH)
 }

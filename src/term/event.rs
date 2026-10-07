@@ -13,12 +13,13 @@ use crate::config::Config;
     reason = "used once the linux backend distinguishes primary selection"
 )]
 pub enum UserEvent {
-    Wakeup,
-    Exit,
-    Title(String),
-    ResetTitle,
+    Wakeup(TabId),
+    Exit(TabId),
+    Title(TabId, String),
+    ResetTitle(TabId),
     ClipboardStore(ClipboardType, String),
     ClipboardLoad(
+        TabId,
         ClipboardType,
         Arc<dyn Fn(&str) -> String + Sync + Send + 'static>,
     ),
@@ -27,12 +28,18 @@ pub enum UserEvent {
 
 #[derive(Clone)]
 pub struct EventProxy {
+    id: TabId,
     proxy: EventLoopProxy<UserEvent>,
     writer: Arc<OnceLock<Notifier>>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct TabId(pub u32);
+
 impl EventListener for EventProxy {
     fn send_event(&self, event: Event) {
+        let id = self.id;
+
         let user_event = match event {
             Event::PtyWrite(text) => {
                 if let Some(notifier) = self.writer.get() {
@@ -41,12 +48,12 @@ impl EventListener for EventProxy {
                 return;
             }
 
-            Event::Wakeup => UserEvent::Wakeup,
-            Event::Exit | Event::ChildExit(_) => UserEvent::Exit,
-            Event::Title(s) => UserEvent::Title(s),
+            Event::Wakeup => UserEvent::Wakeup(id),
+            Event::Exit | Event::ChildExit(_) => UserEvent::Exit(id),
+            Event::Title(s) => UserEvent::Title(id, s),
             Event::ClipboardStore(ty, text) => UserEvent::ClipboardStore(ty, text),
-            Event::ClipboardLoad(ty, formatter) => UserEvent::ClipboardLoad(ty, formatter),
-            Event::ResetTitle => UserEvent::ResetTitle,
+            Event::ClipboardLoad(ty, formatter) => UserEvent::ClipboardLoad(id, ty, formatter),
+            Event::ResetTitle => UserEvent::ResetTitle(id),
 
             _ => return,
         };
@@ -56,8 +63,9 @@ impl EventListener for EventProxy {
 }
 
 impl EventProxy {
-    pub fn new(proxy: EventLoopProxy<UserEvent>) -> Self {
+    pub fn new(proxy: EventLoopProxy<UserEvent>, id: TabId) -> Self {
         Self {
+            id,
             proxy,
             writer: Arc::new(OnceLock::new()),
         }
