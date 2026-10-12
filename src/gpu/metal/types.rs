@@ -11,4 +11,15 @@ pub type Buffer = Retained<ProtocolObject<dyn MTLBuffer>>;
 pub type Texture = Retained<ProtocolObject<dyn MTLTexture>>;
 pub type Sampler = Retained<ProtocolObject<dyn MTLSamplerState>>;
 
-pub const PIXEL_FORMAT: MTLPixelFormat = MTLPixelFormat::BGRA8Unorm_sRGB;
+// opaque window blends in linear space through an sRGB target. a transparent
+// one can't: WindowServer composites the layer as premultiplied gamma-space
+// rgb, so linear-blended edges come out with rgb and alpha out of step and
+// dark text on a light desktop gets eaten. there the target is plain unorm
+// and the shaders encode to sRGB themselves (GAMMA_BLEND)
+pub fn pixel_format(transparent: bool) -> MTLPixelFormat {
+    if transparent {
+        MTLPixelFormat::BGRA8Unorm
+    } else {
+        MTLPixelFormat::BGRA8Unorm_sRGB
+    }
+}

@@ -8,7 +8,7 @@ use objc2_quartz_core::{CAMetalDrawable, CATransaction};
 use winit::window::Window;
 
 use crate::{
-    color::linear,
+    color::{clear_color, linear},
     config::Config,
     font::{Atlas, Metrics},
     gpu::metal::{
@@ -39,7 +39,7 @@ pub struct MetalCtx {
     buffers: Buffers,
     atlas_texture: AtlasTexture,
     emoji_texture: AtlasTexture,
-    background: [f32; 3],
+    background: [f64; 4],
     frames: Frames,
 }
 
@@ -51,11 +51,16 @@ impl MetalCtx {
         emoji: &Atlas,
         config: &Config,
     ) -> Result<Self, String> {
-        let context = Context::new(window, config.theme.background)?;
-        let glyph_pipeline = pipeline::glyph(context.device())?;
-        let emoji_pipeline = pipeline::emoji(context.device())?;
-        let bg_pipeline = pipeline::bg(context.device())?;
-        let underline_pipeline = pipeline::underline(context.device())?;
+        let context = Context::new(
+            window,
+            config.theme.background,
+            config.theme.opacity,
+            config.theme.blur,
+        )?;
+        let glyph_pipeline = pipeline::glyph(context.device(), config.theme.opacity)?;
+        let emoji_pipeline = pipeline::emoji(context.device(), config.theme.opacity)?;
+        let bg_pipeline = pipeline::bg(context.device(), config.theme.opacity)?;
+        let underline_pipeline = pipeline::underline(context.device(), config.theme.opacity)?;
 
         let size = window.inner_size();
         let uniforms = Uniforms {
@@ -88,7 +93,7 @@ impl MetalCtx {
             buffers,
             atlas_texture,
             emoji_texture,
-            background: linear_background(config.theme.background.0),
+            background: clear_color(config.theme.background.0, config.theme.opacity),
             frames: Frames::new(FRAMES_IN_FLIGHT as isize),
         })
     }
@@ -140,10 +145,10 @@ impl MetalCtx {
             attachment.setTexture(Some(&drawable.texture()));
             attachment.setLoadAction(MTLLoadAction::Clear);
             attachment.setClearColor(MTLClearColor {
-                red: self.background[0] as f64,
-                green: self.background[1] as f64,
-                blue: self.background[2] as f64,
-                alpha: 1.0,
+                red: self.background[0],
+                green: self.background[1],
+                blue: self.background[2],
+                alpha: self.background[3],
             });
             attachment.setStoreAction(MTLStoreAction::Store);
 
@@ -228,8 +233,4 @@ impl MetalCtx {
     pub fn update_metrics(&mut self, metrics: Metrics) {
         self.buffers.set_metrics(metrics);
     }
-}
-
-fn linear_background(rgb: [u8; 3]) -> [f32; 3] {
-    [linear(rgb[0]), linear(rgb[1]), linear(rgb[2])]
 }

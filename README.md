@@ -36,6 +36,8 @@ background = "#1d2021"
 foreground = "#ebdbb2"
 cursor = "#ebdbb2"
 dim_strength = 0.66
+opacity = 1.0
+blur = 0
 
 [theme.palette]
 black = "#3c3836"

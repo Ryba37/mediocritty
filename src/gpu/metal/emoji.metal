@@ -1,6 +1,16 @@
 #include <metal_stdlib>
 using namespace metal;
 
+// GAMMA_BLEND: transparent window, non-sRGB target, so colors are encoded
+// here and the fixed-function blend runs in gamma space like WindowServer
+#ifdef GAMMA_BLEND
+inline float3 out_rgb(float3 c) {
+    return select(1.055 * pow(c, 1.0 / 2.4) - 0.055, c * 12.92, c <= 0.0031308);
+}
+#else
+inline float3 out_rgb(float3 c) { return c; }
+#endif
+
 struct VsOut {
     float4 position [[position]];
     float2 uv;
@@ -56,7 +66,8 @@ vertex VsOut vs_emoji(uint vid [[vertex_id]],
 fragment float4 fs_emoji(VsOut in [[stage_in]],
                          texture2d<float> atlas [[texture(0)]],
                          sampler samp [[sampler(0)]]) {
-    // straight alpha, sRGB texture: the sampler linearizes rgb for us and the
-    // pipeline's SourceAlpha blend does the multiply in linear space
-    return atlas.sample(samp, in.uv);
+    // straight alpha, sRGB texture: the sampler linearizes rgb, out_rgb puts
+    // it back when the blend has to run in gamma space
+    float4 c = atlas.sample(samp, in.uv);
+    return float4(out_rgb(c.rgb), c.a);
 }

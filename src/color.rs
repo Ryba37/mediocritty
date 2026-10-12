@@ -99,6 +99,18 @@ impl Palette {
     }
 }
 
+// opaque: linear, the sRGB target encodes it. transparent: the target is
+// plain unorm (types.rs), so gamma-space rgb premultiplied by alpha
+pub fn clear_color(rgb: [u8; 3], opacity: f32) -> [f64; 4] {
+    let o = opacity.clamp(0.0, 1.0);
+    let c = if o < 1.0 {
+        rgb.map(|v| (v as f32 / 255.0 * o) as f64)
+    } else {
+        rgb.map(|v| linear(v) as f64)
+    };
+    [c[0], c[1], c[2], o as f64]
+}
+
 fn srgb_to_linear(c: f32) -> f32 {
     if c <= 0.04045 {
         c / 12.92

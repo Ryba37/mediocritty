@@ -81,6 +81,7 @@ impl ApplicationHandler<UserEvent> for App {
             .create_window(
                 Window::default_attributes()
                     .with_title(DEFAULT_WINDOW_NAME)
+                    .with_transparent(self.config.theme.opacity < 1.0)
                     .with_option_as_alt(OPTION_AS_ALT),
             )
             .unwrap();

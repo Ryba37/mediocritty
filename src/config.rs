@@ -14,6 +14,8 @@ pub struct Theme {
     pub foreground: HexColor,
     pub cursor: HexColor,
     pub dim_strength: f32,
+    pub opacity: f32,
+    pub blur: u32,
 }
 
 impl Default for Theme {
@@ -24,6 +26,8 @@ impl Default for Theme {
             foreground: HexColor([0xeb, 0xdb, 0xb2]),
             cursor: HexColor([0xeb, 0xdb, 0xb2]),
             dim_strength: 0.66,
+            opacity: 1.0,
+            blur: 0,
         }
     }
 }

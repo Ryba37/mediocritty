@@ -12,7 +12,7 @@ use winit::window::Window;
 
 use crate::color::HexColor;
 
-use super::types::{Device, PIXEL_FORMAT, Queue};
+use super::types::{Device, Queue, pixel_format};
 
 pub struct Context {
     device: Device,
@@ -21,7 +21,7 @@ pub struct Context {
 }
 
 impl Context {
-    pub fn new(window: &Window, bg: HexColor) -> Result<Self, String> {
+    pub fn new(window: &Window, bg: HexColor, opacity: f32, blur: u32) -> Result<Self, String> {
         let device = objc2_metal::MTLCreateSystemDefaultDevice()
             .ok_or_else(|| "metal device not found".to_string())?;
 
@@ -29,26 +29,39 @@ impl Context {
             .newCommandQueue()
             .ok_or_else(|| "couldn't create queue".to_string())?;
 
-        let layer = Self::create_layer(&device, window, window.inner_size());
+        let transparent = opacity < 1.0;
+        let layer = Self::create_layer(&device, window, window.inner_size(), transparent);
+        layer.setOpaque(!transparent);
 
-        // setting bg color for default winit window
+        // layer bg sits under the drawable: fine as a resize filler when
+        // opaque, but with transparency it stacks on the clear color and
+        // doubles the configured opacity
         let [r, g, b] = bg.0.map(|c| c as f64 / 255.0);
-        let color = CGColor::new_srgb(r, g, b, 1.0);
-        layer.setBackgroundColor(Some(&color));
+        if !transparent {
+            layer.setBackgroundColor(Some(&CGColor::new_srgb(r, g, b, 1.0)));
+        }
 
         if let Ok(RawWindowHandle::AppKit(h)) = window.window_handle().map(|h| h.as_raw()) {
             let view: &NSView = unsafe { h.ns_view.cast().as_ref() };
             if let Some(ns_window) = view.window() {
-                let ns_color = NSColor::colorWithSRGBRed_green_blue_alpha(r, g, b, 1.0);
+                ns_window.setOpaque(!transparent);
+                let ns_color = if transparent {
+                    NSColor::clearColor()
+                } else {
+                    NSColor::colorWithSRGBRed_green_blue_alpha(r, g, b, 1.0)
+                };
                 ns_window.setBackgroundColor(Some(&ns_color));
             }
         }
 
-        Ok(Self {
+        let ctx = Self {
             device,
             queue,
             layer,
-        })
+        };
+        ctx.set_blur(window, if transparent { blur } else { 0 });
+
+        Ok(ctx)
     }
 
     pub fn device(&self) -> &Device {
@@ -74,10 +87,11 @@ impl Context {
         device: &Device,
         window: &Window,
         size: PhysicalSize<u32>,
+        transparent: bool,
     ) -> Retained<CAMetalLayer> {
         let layer = CAMetalLayer::new();
         layer.setDevice(Some(device));
-        layer.setPixelFormat(PIXEL_FORMAT);
+        layer.setPixelFormat(pixel_format(transparent));
         layer.setPresentsWithTransaction(true);
 
         unsafe {
@@ -115,5 +129,22 @@ impl Context {
             panic!("not macos");
         };
         unsafe { Retained::retain(handle.ns_view.as_ptr().cast()).unwrap() }
+    }
+
+    pub fn set_blur(&self, window: &Window, radius: u32) {
+        unsafe extern "C" {
+            fn CGSMainConnectionID() -> u32;
+            fn CGSSetWindowBackgroundBlurRadius(cid: u32, wid: isize, radius: i32) -> i32;
+        }
+
+        if let Some(ns_window) = Self::view_of(window).window() {
+            unsafe {
+                CGSSetWindowBackgroundBlurRadius(
+                    CGSMainConnectionID(),
+                    ns_window.windowNumber(),
+                    radius as i32,
+                );
+            }
+        }
     }
 }
