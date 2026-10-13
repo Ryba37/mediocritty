@@ -1,4 +1,4 @@
-use alacritty_terminal::index::Point;
+use alacritty_terminal::index::{Column, Line, Point};
 use alacritty_terminal::term::RenderableContent;
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::color::Colors;
@@ -8,8 +8,6 @@ use crate::color::{indexed, linear};
 use crate::config::Config;
 use crate::font::{FontCache, Glyph, Metrics};
 use std::fmt::Write;
-
-const TAB_MAX_WIDTH: usize = 24;
 
 struct Theme {
     background: [u8; 3],
@@ -86,7 +84,31 @@ pub struct UnderlineInstance {
     pub pad: [u32; 3],
 }
 
+// what build needs from one grid cell, copied out while the term lock is
+// held so glyph rasterization (slow, coretext) runs without it
+struct CellSnap {
+    c: char,
+    fg: Color,
+    bg: Color,
+    underline: Option<Color>,
+    flags: Flags,
+    col: usize,
+    // screen row, display offset already applied
+    row: i32,
+    selected: bool,
+    at_cursor: bool,
+    // range into Layout::zerowidth
+    zw_start: u32,
+    zw_len: u32,
+}
+
 pub struct Layout {
+    cells: Vec<CellSnap>,
+    zerowidth: Vec<char>,
+    colors: Colors,
+    cursor_shape: CursorShape,
+    cursor_point: Point,
+    display_offset: i32,
     glyphs: Vec<GlyphInstance>,
     emoji: Vec<EmojiInstance>,
     bg: Vec<BgRect>,
@@ -105,6 +127,12 @@ pub struct Frame<'a> {
 impl Layout {
     pub fn new(config: &Config) -> Self {
         Self {
+            cells: Vec::new(),
+            zerowidth: Vec::new(),
+            colors: Colors::default(),
+            cursor_shape: CursorShape::Hidden,
+            cursor_point: Point::new(Line(0), Column(0)),
+            display_offset: 0,
             glyphs: Vec::new(),
             emoji: Vec::new(),
             bg: Vec::new(),
@@ -118,28 +146,19 @@ impl Layout {
         self.theme = Theme::from_config(config);
     }
 
-    pub fn build(
-        &mut self,
-        content: RenderableContent,
-        cache: &mut FontCache,
-        focused: bool,
-    ) -> Frame<'_> {
-        self.glyphs.clear();
-        self.emoji.clear();
-        self.bg.clear();
-        self.underlines.clear();
+    // the only part that runs under the term lock: a flat copy, no glyph work
+    pub fn snapshot(&mut self, content: RenderableContent) {
+        self.cells.clear();
+        self.zerowidth.clear();
 
-        let metrics = cache.metrics();
-        let colors = content.colors;
-        let window_bg = to_linear(self.theme.background);
         let cursor_point = content.cursor.point;
+        let shape = content.cursor.shape;
         let display_offset = content.display_offset as i32;
 
-        let block_cursor = matches!(
-            content.cursor.shape,
-            CursorShape::Block | CursorShape::HollowBlock
-        );
-        let hollow_cursor = block_cursor && !focused;
+        self.colors = *content.colors;
+        self.cursor_shape = shape;
+        self.cursor_point = cursor_point;
+        self.display_offset = display_offset;
 
         for item in content.display_iter {
             let cell = item.cell;
@@ -151,30 +170,76 @@ impl Layout {
                 continue;
             }
 
-            let wide = cell.flags.contains(Flags::WIDE_CHAR);
-            let col = item.point.column.0 as f32;
-            let row = (item.point.line.0 + display_offset) as f32;
+            let zw_start = self.zerowidth.len() as u32;
+            if let Some(zw) = cell.zerowidth() {
+                self.zerowidth
+                    .extend(zw.iter().copied().filter(|&c| visible_mark(c)));
+            }
 
-            let inverse = cell.flags.contains(Flags::INVERSE);
-            let at_cursor = block_cursor && !hollow_cursor && item.point == cursor_point;
-            let selected = content
-                .selection
-                .as_ref()
-                .is_some_and(|s| s.contains_cell(&item, cursor_point, content.cursor.shape));
+            self.cells.push(CellSnap {
+                c: cell.c,
+                fg: cell.fg,
+                bg: cell.bg,
+                underline: cell.underline_color(),
+                flags: cell.flags,
+                col: item.point.column.0,
+                row: item.point.line.0 + display_offset,
+                selected: content
+                    .selection
+                    .as_ref()
+                    .is_some_and(|s| s.contains_cell(&item, cursor_point, shape)),
+                at_cursor: item.point == cursor_point,
+                zw_start,
+                zw_len: self.zerowidth.len() as u32 - zw_start,
+            });
+        }
+    }
+
+    // turns the last snapshot into instances; no lock needed
+    pub fn build(&mut self, cache: &mut FontCache, focused: bool) -> Frame<'_> {
+        self.glyphs.clear();
+        self.emoji.clear();
+        self.bg.clear();
+        self.underlines.clear();
+
+        let metrics = cache.metrics();
+        let colors = &self.colors;
+        let theme = &self.theme;
+        let window_bg = to_linear(theme.background);
+        let cursor_color = to_linear(dynamic(colors, NamedColor::Cursor).unwrap_or(theme.cursor));
+
+        let block_cursor = matches!(
+            self.cursor_shape,
+            CursorShape::Block | CursorShape::HollowBlock
+        );
+        let hollow_cursor = block_cursor && !focused;
+        let solid_cursor = block_cursor && !hollow_cursor;
+
+        for cell in &self.cells {
+            let wide = cell.flags.contains(Flags::WIDE_CHAR);
+            let col = cell.col as f32;
+            let row = cell.row as f32;
 
             let bold = cell.flags.contains(Flags::BOLD);
             let dim = cell.flags.contains(Flags::DIM);
             let italic = cell.flags.contains(Flags::ITALIC);
 
-            let bright = bold && self.theme.bold_is_bright;
+            let bright = bold && theme.bold_is_bright;
 
             let (mut fg, mut bg) = (
-                resolve(cell.fg, colors, &self.theme, bright, dim),
-                resolve(cell.bg, colors, &self.theme, false, false),
+                resolve(cell.fg, colors, theme, bright, dim),
+                resolve(cell.bg, colors, theme, false, false),
             );
 
-            if inverse ^ at_cursor ^ selected {
+            if cell.flags.contains(Flags::INVERSE) ^ cell.selected {
                 std::mem::swap(&mut fg, &mut bg);
+            }
+
+            // the block cursor is drawn in the cursor color, the char under it
+            // takes whatever the cell's background was
+            if solid_cursor && cell.at_cursor {
+                fg = bg;
+                bg = cursor_color;
             }
 
             let width = if wide { 2.0 } else { 1.0 };
@@ -182,11 +247,19 @@ impl Layout {
             let underline_flags = cell.flags & Flags::ALL_UNDERLINES;
             if !underline_flags.is_empty() {
                 let underline_color = cell
-                    .underline_color()
-                    .map(|c| resolve(c, colors, &self.theme, false, false))
+                    .underline
+                    .map(|c| resolve(c, colors, theme, false, false))
                     .unwrap_or(fg);
 
-                self.push_underline(underline_flags, underline_color, col, row, width, &metrics);
+                push_underline(
+                    &mut self.underlines,
+                    underline_flags,
+                    underline_color,
+                    col,
+                    row,
+                    width,
+                    &metrics,
+                );
             }
 
             if bg != window_bg {
@@ -197,10 +270,6 @@ impl Layout {
                 });
             }
 
-            if cell.c == ' ' {
-                continue;
-            }
-
             let style = match (bold, italic) {
                 (false, false) => 0,
                 (true, false) => 1,
@@ -208,30 +277,44 @@ impl Layout {
                 (true, true) => 3,
             };
 
-            // emoji carry their own color, so fg and the gamma curve are
-            // dropped and the instance is a third of the size
-            match cache.get_or_insert(cell.c, wide, style) {
-                Glyph::Mask(n) => self.glyphs.push(GlyphInstance {
-                    color: fg,
-                    offset: [col, row],
-                    cell: n,
-                    gamma_mix: gamma_mix(fg, bg),
-                }),
-                Glyph::Color(n) => self.emoji.push(EmojiInstance {
-                    offset: [col, row],
-                    cell: n,
-                    pad: 0,
-                }),
+            let marks =
+                &self.zerowidth[cell.zw_start as usize..(cell.zw_start + cell.zw_len) as usize];
+
+            if cell.c != ' ' {
+                push_glyph(
+                    &mut self.glyphs,
+                    &mut self.emoji,
+                    cache,
+                    cell.c,
+                    wide,
+                    style,
+                    [col, row],
+                    fg,
+                    bg,
+                );
+            }
+
+            // combining marks: no shaping, each one is drawn over the base
+            // cell. good enough for accents, which is what shows up in practice
+            for &mark in marks {
+                if let Glyph::Mask(n) = cache.get_or_insert(mark, wide, style) {
+                    self.glyphs.push(GlyphInstance {
+                        color: fg,
+                        offset: [col, row],
+                        cell: n,
+                        gamma_mix: gamma_mix(fg, bg),
+                    });
+                }
             }
         }
 
-        if display_offset == 0 {
+        if self.display_offset == 0 {
             let shape = if hollow_cursor {
                 CursorShape::HollowBlock
             } else {
-                content.cursor.shape
+                self.cursor_shape
             };
-            self.push_cursor(shape, cursor_point);
+            self.push_cursor(shape, self.cursor_point, cursor_color);
         }
 
         self.frame()
@@ -243,54 +326,6 @@ impl Layout {
             emoji: &self.emoji,
             bg: &self.bg,
             underlines: &self.underlines,
-        }
-    }
-
-    fn push_underline(
-        &mut self,
-        flags: Flags,
-        color: [f32; 4],
-        col: f32,
-        row: f32,
-        width: f32,
-        metrics: &Metrics,
-    ) {
-        let cell_h = metrics.cell_height as f32;
-        let descent = cell_h - metrics.ascent;
-        let ut = metrics.underline_thickness;
-        let straight_y = metrics.ascent + metrics.underline_position - ut / 2.0;
-
-        let mut push = |y_top: f32, height: f32, style: u32| {
-            let y_top = y_top.min(cell_h - height).max(0.0);
-
-            self.underlines.push(UnderlineInstance {
-                color,
-                offset: [col, row + y_top / cell_h],
-                size: [width, height / cell_h],
-                style,
-                pad: [0; 3],
-            });
-        };
-
-        if flags.contains(Flags::DOUBLE_UNDERLINE) {
-            push(
-                metrics.ascent + 0.25 * descent - ut / 2.0,
-                ut,
-                UNDERLINE_STYLE_STRAIGHT,
-            );
-            push(
-                metrics.ascent + 0.75 * descent - ut / 2.0,
-                ut,
-                UNDERLINE_STYLE_STRAIGHT,
-            );
-        } else if flags.contains(Flags::UNDERCURL) {
-            push(metrics.ascent, descent, UNDERLINE_STYLE_UNDERCURL);
-        } else if flags.contains(Flags::DOTTED_UNDERLINE) {
-            push(metrics.ascent, descent, UNDERLINE_STYLE_DOTTED);
-        } else if flags.contains(Flags::DASHED_UNDERLINE) {
-            push(straight_y, ut, UNDERLINE_STYLE_DASHED);
-        } else if flags.contains(Flags::UNDERLINE) {
-            push(straight_y, ut, UNDERLINE_STYLE_STRAIGHT);
         }
     }
 
@@ -352,26 +387,24 @@ impl Layout {
 
                 let offset = [start + k as f32, row];
 
-                match cache.get_or_insert(ch, false, style) {
-                    Glyph::Mask(n) => self.glyphs.push(GlyphInstance {
-                        color: fg,
-                        offset,
-                        cell: n,
-                        gamma_mix: gamma_mix(fg, bg),
-                    }),
-                    Glyph::Color(n) => self.emoji.push(EmojiInstance {
-                        offset,
-                        cell: n,
-                        pad: 0,
-                    }),
-                }
+                push_glyph(
+                    &mut self.glyphs,
+                    &mut self.emoji,
+                    cache,
+                    ch,
+                    false,
+                    style,
+                    offset,
+                    fg,
+                    bg,
+                );
             }
         }
     }
 
-    fn push_cursor(&mut self, shape: CursorShape, point: Point) {
+    fn push_cursor(&mut self, shape: CursorShape, point: Point, color: [f32; 4]) {
         if shape == CursorShape::HollowBlock {
-            self.push_hollow_cursor(point);
+            self.push_hollow_cursor(point, color);
             return;
         }
 
@@ -390,16 +423,15 @@ impl Layout {
         };
 
         self.bg.push(BgRect {
-            color: to_linear(self.theme.cursor),
+            color,
             offset: [point.column.0 as f32, point.line.0 as f32 + y_offset],
             size,
         });
     }
 
-    fn push_hollow_cursor(&mut self, point: Point) {
+    fn push_hollow_cursor(&mut self, point: Point, color: [f32; 4]) {
         let col = point.column.0 as f32;
         let row = point.line.0 as f32;
-        let color = to_linear(self.theme.cursor);
         let t = self.theme.hollow_cursor_thickness;
 
         let edges = [
@@ -426,26 +458,46 @@ fn resolve(
     is_bright: bool,
     is_dim: bool,
 ) -> [f32; 4] {
+    let indexed_rgb = |i: u8, bright: bool, dim: bool| {
+        let (idx, use_dim) = resolve_index(i, bright, dim);
+
+        match colors[idx as usize] {
+            Some(rgb) => ([rgb.r, rgb.g, rgb.b], use_dim),
+            None => (indexed(idx, &theme.palette), use_dim),
+        }
+    };
+
     let (rgb, is_dimmed) = match color {
         Color::Spec(rgb) => ([rgb.r, rgb.g, rgb.b], false),
-        Color::Indexed(i) => {
-            let (idx, use_dim) = resolve_index(i, is_bright, is_dim);
-
-            match colors[idx as usize] {
-                Some(rgb) => ([rgb.r, rgb.g, rgb.b], use_dim),
-                None => (indexed(idx, &theme.palette), use_dim),
-            }
-        }
+        Color::Indexed(i) => indexed_rgb(i, is_bright, is_dim),
         Color::Named(named) => match named {
-            NamedColor::Foreground => (theme.foreground, false),
-            NamedColor::Background => (theme.background, false),
-            NamedColor::Cursor => (theme.cursor, false),
+            // OSC 10/11/12 land in colors[256..259], the theme is the fallback
+            NamedColor::Foreground | NamedColor::BrightForeground => (
+                dynamic(colors, NamedColor::Foreground).unwrap_or(theme.foreground),
+                false,
+            ),
+            NamedColor::DimForeground => (
+                dim(
+                    dynamic(colors, NamedColor::Foreground).unwrap_or(theme.foreground),
+                    theme.dim_strength,
+                ),
+                true,
+            ),
+            NamedColor::Background => (dynamic(colors, named).unwrap_or(theme.background), false),
+            NamedColor::Cursor => (dynamic(colors, named).unwrap_or(theme.cursor), false),
             other => {
-                let (idx, use_dim) = resolve_index(other as u8, is_bright, is_dim);
+                // 0..16 are the palette, the Dim* block mirrors 0..8 dimmed.
+                // a plain `as u8` would wrap 259+ onto random palette slots
+                let n = other as usize;
+                let dim_black = NamedColor::DimBlack as usize;
 
-                match colors[idx as usize] {
-                    Some(rgb) => ([rgb.r, rgb.g, rgb.b], use_dim),
-                    None => (indexed(idx, &theme.palette), use_dim),
+                if n < 16 {
+                    indexed_rgb(n as u8, is_bright, is_dim)
+                } else if (dim_black..dim_black + 8).contains(&n) {
+                    let (rgb, _) = indexed_rgb((n - dim_black) as u8, false, false);
+                    (dim(rgb, theme.dim_strength), true)
+                } else {
+                    (theme.foreground, false)
                 }
             }
         },
@@ -458,6 +510,98 @@ fn resolve(
     };
 
     to_linear(rgb)
+}
+
+fn dynamic(colors: &Colors, named: NamedColor) -> Option<[u8; 3]> {
+    colors[named].map(|rgb| [rgb.r, rgb.g, rgb.b])
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push_glyph(
+    glyphs: &mut Vec<GlyphInstance>,
+    emoji: &mut Vec<EmojiInstance>,
+    cache: &mut FontCache,
+    ch: char,
+    wide: bool,
+    style: u8,
+    offset: [f32; 2],
+    fg: [f32; 4],
+    bg: [f32; 4],
+) {
+    // emoji carry their own color, so fg and the gamma curve are dropped and
+    // the instance is a third of the size
+    match cache.get_or_insert(ch, wide, style) {
+        Glyph::Mask(n) => glyphs.push(GlyphInstance {
+            color: fg,
+            offset,
+            cell: n,
+            gamma_mix: gamma_mix(fg, bg),
+        }),
+        Glyph::Color(n) => emoji.push(EmojiInstance {
+            offset,
+            cell: n,
+            pad: 0,
+        }),
+    }
+}
+
+// zero-width chars that only steer other glyphs (joiners, variation
+// selectors) and have nothing to draw on their own
+fn visible_mark(c: char) -> bool {
+    !matches!(c,
+        '\u{200b}'..='\u{200f}'
+        | '\u{2060}'..='\u{2064}'
+        | '\u{fe00}'..='\u{fe0f}'
+        | '\u{e0100}'..='\u{e01ef}'
+    )
+}
+
+fn push_underline(
+    underlines: &mut Vec<UnderlineInstance>,
+    flags: Flags,
+    color: [f32; 4],
+    col: f32,
+    row: f32,
+    width: f32,
+    metrics: &Metrics,
+) {
+    let cell_h = metrics.cell_height as f32;
+    let descent = cell_h - metrics.ascent;
+    let ut = metrics.underline_thickness;
+    let straight_y = metrics.ascent + metrics.underline_position - ut / 2.0;
+
+    let mut push = |y_top: f32, height: f32, style: u32| {
+        let y_top = y_top.min(cell_h - height).max(0.0);
+
+        underlines.push(UnderlineInstance {
+            color,
+            offset: [col, row + y_top / cell_h],
+            size: [width, height / cell_h],
+            style,
+            pad: [0; 3],
+        });
+    };
+
+    if flags.contains(Flags::DOUBLE_UNDERLINE) {
+        push(
+            metrics.ascent + 0.25 * descent - ut / 2.0,
+            ut,
+            UNDERLINE_STYLE_STRAIGHT,
+        );
+        push(
+            metrics.ascent + 0.75 * descent - ut / 2.0,
+            ut,
+            UNDERLINE_STYLE_STRAIGHT,
+        );
+    } else if flags.contains(Flags::UNDERCURL) {
+        push(metrics.ascent, descent, UNDERLINE_STYLE_UNDERCURL);
+    } else if flags.contains(Flags::DOTTED_UNDERLINE) {
+        push(metrics.ascent, descent, UNDERLINE_STYLE_DOTTED);
+    } else if flags.contains(Flags::DASHED_UNDERLINE) {
+        push(straight_y, ut, UNDERLINE_STYLE_DASHED);
+    } else if flags.contains(Flags::UNDERLINE) {
+        push(straight_y, ut, UNDERLINE_STYLE_STRAIGHT);
+    }
 }
 
 fn to_linear(rgb: [u8; 3]) -> [f32; 4] {
@@ -481,7 +625,7 @@ fn dim(color: [u8; 3], dim_strength: f32) -> [u8; 3] {
 
 fn resolve_index(color: u8, is_bright: bool, is_dim: bool) -> (u8, bool) {
     if is_dim {
-        if color >= 8 && color <= 15 {
+        if (8..=15).contains(&color) {
             return (color - 8, true);
         }
 
@@ -495,6 +639,8 @@ fn resolve_index(color: u8, is_bright: bool, is_dim: bool) -> (u8, bool) {
     (color, false)
 }
 
+// tabs split the bar evenly. never 0: with more tabs than columns each one
+// still gets a cell and the ones past the edge are reachable by keyboard
 pub fn tab_width(cols: usize, count: usize) -> usize {
-    cols / count.max(1).min(TAB_MAX_WIDTH)
+    (cols / count.max(1)).max(1)
 }

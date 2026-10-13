@@ -16,15 +16,24 @@ pub struct AtlasTexture {
 }
 
 impl AtlasTexture {
-    pub fn new(device: &Device, atlas: &Atlas) -> Result<Self, String> {
-        Ok(Self {
-            texture: create_texture(device, atlas)?,
+    pub fn new(device: &Device, atlas: &mut Atlas) -> Result<Self, String> {
+        let texture = create_texture(device, atlas)?;
+        let this = Self {
+            texture,
             sampler: create_sampler(device)?,
-        })
+        };
+
+        this.upload_all(atlas);
+        atlas.realloc_done();
+
+        Ok(this)
     }
 
+    // true when a new texture was made and its size has to reach the uniforms
     pub fn sync(&mut self, device: &Device, atlas: &mut Atlas) -> bool {
-        if atlas.take_resized() {
+        if atlas.needs_realloc() {
+            // on failure the flag stays set: nothing is uploaded into the old,
+            // smaller texture and the next frame tries again
             match create_texture(device, atlas) {
                 Ok(t) => self.texture = t,
                 Err(e) => {
@@ -34,7 +43,7 @@ impl AtlasTexture {
             }
 
             self.upload_all(atlas);
-            atlas.take_dirty();
+            atlas.realloc_done();
             return true;
         }
 

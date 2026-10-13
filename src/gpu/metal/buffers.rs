@@ -149,8 +149,19 @@ impl Buffers {
         self.uniforms.screen = screen;
     }
 
-    pub fn set_atlas(&mut self, atlas: [f32; 2]) {
+    pub fn set_atlas(&mut self, atlas: [f32; 2], cols: u32) {
         self.uniforms.atlas = atlas;
+        self.uniforms.cols = cols;
+    }
+
+    pub fn set_text(&mut self, gamma: f32, contrast: f32) {
+        self.uniforms.gamma = gamma;
+        self.uniforms.contrast = contrast;
+    }
+
+    // the slot the bind_* calls use. set only for a frame that gets encoded
+    pub fn set_frame(&mut self, slot: usize) {
+        self.frame = slot;
     }
 
     pub fn set_emoji_atlas(&mut self, atlas: [f32; 2], cols: u32) {
@@ -165,13 +176,17 @@ impl Buffers {
         emoji: &[EmojiInstance],
         bg: &[BgRect],
         underlines: &[UnderlineInstance],
-    ) -> Result<(), String> {
-        self.frame = (self.frame + 1) % FRAMES_IN_FLIGHT;
+    ) -> Result<usize, String> {
+        // the slot after the last encoded frame was last used three frames
+        // ago, and the frame semaphore already waited that one out
+        let slot = (self.frame + 1) % FRAMES_IN_FLIGHT;
 
-        self.glyphs.upload(device, glyphs, self.frame)?;
-        self.emoji.upload(device, emoji, self.frame)?;
-        self.bg.upload(device, bg, self.frame)?;
-        self.underlines.upload(device, underlines, self.frame)
+        self.glyphs.upload(device, glyphs, slot)?;
+        self.emoji.upload(device, emoji, slot)?;
+        self.bg.upload(device, bg, slot)?;
+        self.underlines.upload(device, underlines, slot)?;
+
+        Ok(slot)
     }
 
     pub fn bind_common(&self, encoder: &ProtocolObject<dyn MTLRenderCommandEncoder>) {

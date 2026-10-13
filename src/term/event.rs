@@ -1,7 +1,8 @@
 use alacritty_terminal::{
-    event::{Event, EventListener, Notify},
+    event::{Event, EventListener, Notify, WindowSize},
     event_loop::Notifier,
     term::ClipboardType,
+    vte::ansi::Rgb,
 };
 use std::sync::{Arc, OnceLock};
 use winit::event_loop::EventLoopProxy;
@@ -24,6 +25,17 @@ pub enum UserEvent {
         Arc<dyn Fn(&str) -> String + Sync + Send + 'static>,
     ),
     ConfigReload(Config),
+    // OSC 4/10/11/12 query: answered on the main thread, it knows the theme
+    ColorRequest(
+        TabId,
+        usize,
+        Arc<dyn Fn(Rgb) -> String + Sync + Send + 'static>,
+    ),
+    // CSI 14 t: text area size in pixels
+    SizeRequest(
+        TabId,
+        Arc<dyn Fn(WindowSize) -> String + Sync + Send + 'static>,
+    ),
 }
 
 #[derive(Clone)]
@@ -54,6 +66,8 @@ impl EventListener for EventProxy {
             Event::ClipboardStore(ty, text) => UserEvent::ClipboardStore(ty, text),
             Event::ClipboardLoad(ty, formatter) => UserEvent::ClipboardLoad(id, ty, formatter),
             Event::ResetTitle => UserEvent::ResetTitle(id),
+            Event::ColorRequest(index, formatter) => UserEvent::ColorRequest(id, index, formatter),
+            Event::TextAreaSizeRequest(formatter) => UserEvent::SizeRequest(id, formatter),
 
             _ => return,
         };

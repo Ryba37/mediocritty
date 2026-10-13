@@ -100,6 +100,16 @@ pub fn point_from_pixels(
     (Point::new(Line(line), Column(column)), side)
 }
 
+// one unmodified arrow press, for the alternate scroll mode
+pub fn arrow(up: bool, mode: TermMode) -> &'static [u8] {
+    match (up, mode.contains(TermMode::APP_CURSOR)) {
+        (true, true) => b"\x1bOA",
+        (true, false) => b"\x1b[A",
+        (false, true) => b"\x1bOB",
+        (false, false) => b"\x1b[B",
+    }
+}
+
 fn alt_sends_esc(mods: &Modifiers, opt: OptionAsAlt) -> bool {
     let l = mods.lalt_state() == ModifiersKeyState::Pressed;
     let r = mods.ralt_state() == ModifiersKeyState::Pressed;
@@ -136,20 +146,48 @@ fn named_key(key: NamedKey, shift: bool, ctrl: bool, alt: bool, mode: TermMode) 
         });
     }
 
-    let num = match key {
-        NamedKey::Insert => Some(b'2'),
-        NamedKey::Delete => Some(b'3'),
-        NamedKey::PageUp => Some(b'5'),
-        NamedKey::PageDown => Some(b'6'),
+    // F1-F4 are SS3 P..S, xterm moves them to CSI 1;m P..S once modified
+    let ss3 = match key {
+        NamedKey::F1 => Some(b'P'),
+        NamedKey::F2 => Some(b'Q'),
+        NamedKey::F3 => Some(b'R'),
+        NamedKey::F4 => Some(b'S'),
+        _ => None,
+    };
+
+    if let Some(c) = ss3 {
+        return Some(if m > 1 {
+            vec![0x1b, b'[', b'1', b';', b'0' + m, c]
+        } else {
+            vec![0x1b, b'O', c]
+        });
+    }
+
+    let num: Option<&[u8]> = match key {
+        NamedKey::Insert => Some(b"2"),
+        NamedKey::Delete => Some(b"3"),
+        NamedKey::PageUp => Some(b"5"),
+        NamedKey::PageDown => Some(b"6"),
+        NamedKey::F5 => Some(b"15"),
+        NamedKey::F6 => Some(b"17"),
+        NamedKey::F7 => Some(b"18"),
+        NamedKey::F8 => Some(b"19"),
+        NamedKey::F9 => Some(b"20"),
+        NamedKey::F10 => Some(b"21"),
+        NamedKey::F11 => Some(b"23"),
+        NamedKey::F12 => Some(b"24"),
         _ => None,
     };
 
     if let Some(n) = num {
-        return Some(if m > 1 {
-            vec![0x1b, b'[', n, b';', b'0' + m, b'~']
-        } else {
-            vec![0x1b, b'[', n, b'~']
-        });
+        let mut out = Vec::with_capacity(n.len() + 5);
+        out.extend_from_slice(b"\x1b[");
+        out.extend_from_slice(n);
+        if m > 1 {
+            out.extend_from_slice(&[b';', b'0' + m]);
+        }
+        out.push(b'~');
+        return Some(out);
     }
 
     let base: &[u8] = match key {

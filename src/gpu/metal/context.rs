@@ -29,39 +29,48 @@ impl Context {
             .newCommandQueue()
             .ok_or_else(|| "couldn't create queue".to_string())?;
 
-        let transparent = opacity < 1.0;
-        let layer = Self::create_layer(&device, window, window.inner_size(), transparent);
-        layer.setOpaque(!transparent);
-
-        // layer bg sits under the drawable: fine as a resize filler when
-        // opaque, but with transparency it stacks on the clear color and
-        // doubles the configured opacity
-        let [r, g, b] = bg.0.map(|c| c as f64 / 255.0);
-        if !transparent {
-            layer.setBackgroundColor(Some(&CGColor::new_srgb(r, g, b, 1.0)));
-        }
-
-        if let Ok(RawWindowHandle::AppKit(h)) = window.window_handle().map(|h| h.as_raw()) {
-            let view: &NSView = unsafe { h.ns_view.cast().as_ref() };
-            if let Some(ns_window) = view.window() {
-                ns_window.setOpaque(!transparent);
-                let ns_color = if transparent {
-                    NSColor::clearColor()
-                } else {
-                    NSColor::colorWithSRGBRed_green_blue_alpha(r, g, b, 1.0)
-                };
-                ns_window.setBackgroundColor(Some(&ns_color));
-            }
-        }
+        let layer = Self::create_layer(&device, window, window.inner_size());
 
         let ctx = Self {
             device,
             queue,
             layer,
         };
-        ctx.set_blur(window, if transparent { blur } else { 0 });
+        ctx.apply_appearance(window, bg, opacity, blur);
 
         Ok(ctx)
+    }
+
+    // everything opacity and the theme bg decide on the layer and window.
+    // safe to call again on config reload
+    pub fn apply_appearance(&self, window: &Window, bg: HexColor, opacity: f32, blur: u32) {
+        let transparent = opacity < 1.0;
+
+        self.layer.setPixelFormat(pixel_format(transparent));
+        self.layer.setOpaque(!transparent);
+
+        // layer bg sits under the drawable: fine as a resize filler when
+        // opaque, but with transparency it stacks on the clear color and
+        // doubles the configured opacity
+        let [r, g, b] = bg.0.map(|c| c as f64 / 255.0);
+        if transparent {
+            self.layer.setBackgroundColor(None);
+        } else {
+            self.layer
+                .setBackgroundColor(Some(&CGColor::new_srgb(r, g, b, 1.0)));
+        }
+
+        if let Some(ns_window) = Self::view_of(window).window() {
+            ns_window.setOpaque(!transparent);
+            let ns_color = if transparent {
+                NSColor::clearColor()
+            } else {
+                NSColor::colorWithSRGBRed_green_blue_alpha(r, g, b, 1.0)
+            };
+            ns_window.setBackgroundColor(Some(&ns_color));
+        }
+
+        self.set_blur(window, if transparent { blur } else { 0 });
     }
 
     pub fn device(&self) -> &Device {
@@ -87,11 +96,9 @@ impl Context {
         device: &Device,
         window: &Window,
         size: PhysicalSize<u32>,
-        transparent: bool,
     ) -> Retained<CAMetalLayer> {
         let layer = CAMetalLayer::new();
         layer.setDevice(Some(device));
-        layer.setPixelFormat(pixel_format(transparent));
         layer.setPresentsWithTransaction(true);
 
         unsafe {

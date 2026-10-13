@@ -1,6 +1,6 @@
 use std::ptr::NonNull;
 
-use objc2_core_foundation::{CFRetained, CFString, CGPoint, CGRect, CGSize};
+use objc2_core_foundation::{CFRange, CFRetained, CFString, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{
     CGBitmapContextCreate, CGBitmapContextGetBytesPerRow, CGBitmapContextGetData, CGColorSpace,
     CGContext, CGGlyph, CGImageAlphaInfo, CGImageByteOrderInfo, CGInterpolationQuality,
@@ -275,10 +275,12 @@ impl Font {
         let descent = unsafe { inner.descent() };
         let leading = unsafe { inner.leading() };
 
-        let cell_height = (ascent + descent + leading).ceil() as u32;
+        // max(1): a broken face must not hand out a zero cell, every grid and
+        // atlas size divides by it
+        let cell_height = ((ascent + descent + leading).ceil() as u32).max(1);
 
         let glyph = Self::glyph_for(inner, 'M').ok_or("glyph M not found")?;
-        let cell_width = Self::advance(inner, glyph).ceil() as u32;
+        let cell_width = (Self::advance(inner, glyph).ceil() as u32).max(1);
 
         // CoreText reports underline position as a negative offset from the
         // baseline (y-up); we render y-down, so flip it into "pixels below
@@ -310,6 +312,22 @@ impl Font {
         };
 
         ok.then_some(glyphs[0])
+    }
+
+    // the installed face coretext would pick for ch, at this font's size.
+    // LastResort is coretext's "nothing has it", which is no better than tofu
+    pub fn fallback_for(&self, ch: char) -> Option<Self> {
+        let text = CFString::from_str(ch.encode_utf8(&mut [0; 4]));
+        let range = CFRange::new(0, ch.len_utf16() as isize);
+        let inner = unsafe { self.inner.for_string(&text, range) };
+        let font = Self { inner };
+
+        let name = font.postscript_name();
+        if name == "LastResort" || name == self.postscript_name() {
+            return None;
+        }
+
+        font.glyph(ch).is_some().then_some(font)
     }
 
     pub fn postscript_name(&self) -> String {

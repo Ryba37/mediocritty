@@ -1,4 +1,11 @@
-use alacritty_terminal::term::TermMode;
+use alacritty_terminal::{
+    event::WindowSize,
+    grid::Dimensions,
+    term::TermMode,
+    vte::ansi::{NamedColor, Rgb},
+};
+
+use crate::{config::Config, term::TabId};
 
 use super::Runtime;
 
@@ -53,5 +60,57 @@ impl Runtime {
                 b"\x1b[O".to_vec()
             });
         }
+    }
+
+    // OSC 4/10/11/12 query. whatever the program set itself wins, the theme
+    // fills in the rest
+    pub(crate) fn answer_color(
+        &self,
+        id: TabId,
+        index: usize,
+        formatter: &(dyn Fn(Rgb) -> String + Sync + Send),
+        config: &Config,
+    ) {
+        let Some(tab) = self.index_of(id).map(|i| &self.tabs[i]) else {
+            return;
+        };
+
+        let set = tab.terminal.term().lock().colors()[index];
+        let theme = &config.theme;
+        let palette = theme.palette.to_array();
+
+        let [r, g, b] = set.map(|c| [c.r, c.g, c.b]).unwrap_or_else(|| match index {
+            0..=255 => crate::color::indexed(index as u8, &palette),
+            i if i == NamedColor::Background as usize => theme.background.0,
+            i if i == NamedColor::Cursor as usize => theme.cursor.0,
+            _ => theme.foreground.0,
+        });
+
+        tab.terminal.write(formatter(Rgb { r, g, b }).into_bytes());
+    }
+
+    // CSI 14 t
+    pub(crate) fn answer_size(
+        &self,
+        id: TabId,
+        formatter: &(dyn Fn(WindowSize) -> String + Sync + Send),
+    ) {
+        let Some(tab) = self.index_of(id).map(|i| &self.tabs[i]) else {
+            return;
+        };
+
+        let (cols, rows) = {
+            let term = tab.terminal.term().lock();
+            (term.columns(), term.screen_lines())
+        };
+
+        let size = WindowSize {
+            num_lines: rows as u16,
+            num_cols: cols as u16,
+            cell_width: self.metrics.cell_width as u16,
+            cell_height: self.metrics.cell_height as u16,
+        };
+
+        tab.terminal.write(formatter(size).into_bytes());
     }
 }

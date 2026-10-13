@@ -8,14 +8,16 @@ const CUBE: [u8; 6] = [0, 95, 135, 175, 215, 255];
 static SRGB_TO_LINEAR: LazyLock<[f32; 256]> =
     LazyLock::new(|| from_fn(|i| srgb_to_linear(i as f32 / 255.0)));
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct HexColor(pub [u8; 3]);
 
 impl<'de> Deserialize<'de> for HexColor {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        let s: &str = Deserialize::deserialize(d)?;
-        let s = s.trim_start_matches('#');
-        if s.len() != 6 {
+        // owned: toml can't lend a &str out of an escaped string
+        let s: String = Deserialize::deserialize(d)?;
+        let s = s.strip_prefix('#').unwrap_or(&s);
+        // ascii check first, slicing a multibyte string at byte offsets panics
+        if s.len() != 6 || !s.bytes().all(|b| b.is_ascii_hexdigit()) {
             return Err(serde::de::Error::custom("color must be in #rrggbb format"));
         }
         let bytes = (0..3)
@@ -23,12 +25,6 @@ impl<'de> Deserialize<'de> for HexColor {
             .collect::<Result<Vec<_>, _>>()
             .map_err(serde::de::Error::custom)?;
         Ok(HexColor([bytes[0], bytes[1], bytes[2]]))
-    }
-}
-
-impl Default for HexColor {
-    fn default() -> Self {
-        HexColor([0, 0, 0])
     }
 }
 

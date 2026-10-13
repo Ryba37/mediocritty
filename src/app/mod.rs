@@ -19,7 +19,7 @@ mod user_event;
 
 use input::InputState;
 
-pub const DEFAULT_WINDOW_NAME: &'static str = "mediocritty";
+pub const DEFAULT_WINDOW_NAME: &str = "mediocritty";
 pub const OPTION_AS_ALT: OptionAsAlt = OptionAsAlt::OnlyLeft;
 
 pub struct App {

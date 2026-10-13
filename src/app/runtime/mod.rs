@@ -35,6 +35,7 @@ pub(crate) struct Runtime {
     proxy: EventLoopProxy<UserEvent>,
     next_id: u32,
     focused: bool,
+    overflowed: bool,
 }
 
 impl Runtime {
@@ -65,6 +66,7 @@ impl Runtime {
             proxy,
             next_id: 1,
             focused: false,
+            overflowed: false,
         })
     }
 
@@ -79,14 +81,14 @@ impl Runtime {
     pub(crate) fn redraw(&mut self, focused: bool) {
         let term = self.tabs[self.active].terminal.term().lock();
 
-        self.layout
-            .build(term.renderable_content(), &mut self.cache, focused);
-
+        // the io thread needs this lock to parse pty output, so only a flat
+        // copy happens under it. glyph rasterization comes after
+        self.layout.snapshot(term.renderable_content());
         let (rows, cols) = (term.screen_lines(), term.columns());
 
-        // the io thread needs this lock to parse pty output, so give it back
-        // before the slow part
         drop(term);
+
+        self.layout.build(&mut self.cache, focused);
 
         if self.tabs.len() > 1 {
             let active = self.active;
@@ -103,6 +105,23 @@ impl Runtime {
         let frame = self.layout.frame();
         let (atlas, emoji) = self.cache.atlases_mut();
         self.renderer.render(&frame, atlas, emoji);
+
+        // an atlas hit the texture limit: this frame showed tofu for what
+        // didn't fit. start the atlases over and draw again, only what is on
+        // screen now gets rasterized
+        // a screen that alone overflows would loop here forever, so only the
+        // first overflow in a row asks for another frame
+        let overflowed = self.cache.take_overflow();
+
+        if overflowed {
+            self.cache.reset();
+
+            if !self.overflowed {
+                self.window.request_redraw();
+            }
+        }
+
+        self.overflowed = overflowed;
     }
 
     // every tab keeps its own grid and pty, so all of them have to learn the

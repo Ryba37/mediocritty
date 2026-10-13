@@ -26,6 +26,7 @@ pub(super) fn spawn(
         metrics.cell_width as u16,
         metrics.cell_height as u16,
         config.shell.locale.clone(),
+        config.osc52.into(),
     )?;
 
     Ok(Tab {
@@ -90,10 +91,6 @@ impl Runtime {
         self.sync_title();
         self.window.request_redraw();
 
-        if self.tabs.len() > 1 {
-            self.window.request_redraw();
-        }
-
         false
     }
 
@@ -115,10 +112,6 @@ impl Runtime {
         }
 
         let width = crate::layout::tab_width(cols, count);
-
-        if width == 0 {
-            return None;
-        }
 
         let col = (x.max(0.0) / self.metrics.cell_width as f64) as usize;
         let index = col / width;
@@ -153,10 +146,19 @@ impl Runtime {
             return;
         };
 
+        if self.tabs[index].title == title {
+            return;
+        }
+
         self.tabs[index].title = title;
 
         if index == self.active {
             self.sync_title();
+        }
+
+        // the bar shows every tab's title, not just the active one
+        if self.tabs.len() > 1 {
+            self.window.request_redraw();
         }
     }
 

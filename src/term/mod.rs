@@ -9,7 +9,7 @@ use alacritty_terminal::{
     index::{Point, Side},
     selection::Selection,
     sync::FairMutex,
-    term::{Config, TermMode},
+    term::{Config, Osc52, TermMode},
     tty::{self, Pty},
 };
 
@@ -36,9 +36,14 @@ impl Terminal {
         cell_width: u16,
         cell_height: u16,
         locale_cfg: Option<String>,
+        osc52: Osc52,
     ) -> Result<Self, String> {
         let size = TermSize::new(cols, rows);
-        let term = Term::new(Config::default(), &size, proxy.clone());
+        let config = Config {
+            osc52,
+            ..Config::default()
+        };
+        let term = Term::new(config, &size, proxy.clone());
         let term = Arc::new(FairMutex::new(term));
 
         let window_size = WindowSize {
@@ -48,30 +53,31 @@ impl Terminal {
             cell_height,
         };
 
-        let mut options = tty::Options::default();
-        options.working_directory = std::env::var_os("HOME").map(std::path::PathBuf::from);
-
-        let candidate = locale_cfg.unwrap_or_else(system_locale);
-        let locale = if locale_available(&candidate) {
-            candidate
-        } else if locale_available(DEFAULT_LOCALE) {
-            String::from(DEFAULT_LOCALE)
-        } else {
-            String::from(FALLBACK_LOCALE)
+        let mut options = tty::Options {
+            working_directory: std::env::var_os("HOME").map(std::path::PathBuf::from),
+            ..Default::default()
         };
 
-        for key in [
-            "LANG",
-            "LC_ALL",
-            "LC_CTYPE",
-            "LC_COLLATE",
-            "LC_MESSAGES",
-            "LC_MONETARY",
-            "LC_NUMERIC",
-            "LC_TIME",
-        ] {
-            options.env.insert(key.into(), locale.clone());
-        }
+        // only LANG, like Terminal.app and iTerm2. LC_ALL would override
+        // every LC_* the user sets in their rc, and a regional LC_NUMERIC
+        // turns 3.14 into 3,14 under printf and awk
+        let locale = [
+            locale_cfg,
+            std::env::var("LANG").ok().filter(|l| !l.is_empty()),
+            Some(system_locale()),
+        ]
+        .into_iter()
+        .flatten()
+        .find(|l| locale_available(l))
+        .unwrap_or_else(|| {
+            if locale_available(DEFAULT_LOCALE) {
+                DEFAULT_LOCALE.into()
+            } else {
+                FALLBACK_LOCALE.into()
+            }
+        });
+
+        options.env.insert("LANG".into(), locale);
 
         let pty = tty::new(&options, window_size, 0).map_err(|e| format!("pty: {e}"))?;
 
@@ -134,11 +140,15 @@ impl Terminal {
         self.term.lock().selection_to_string()
     }
 
+    // never blocks the caller: dropping the pty sends SIGHUP and then waits
+    // for the child, which hangs for as long as the child ignores HUP. the
+    // join and that wait happen on a throwaway thread; if the app quits
+    // first, closing the master fd hangs the child up anyway
     pub fn shutdown(&mut self) {
         let _ = self.notifier.0.send(Msg::Shutdown);
 
         if let Some(thread) = self.io_thread.take() {
-            let _ = thread.join();
+            std::thread::spawn(move || drop(thread.join()));
         }
     }
 
@@ -177,7 +187,9 @@ fn system_locale() -> String {
                 .ok()
                 .filter(|o| o.status.success())
                 .and_then(|o| String::from_utf8(o.stdout).ok())
-                .map(|s| s.trim().to_string())
+                // en_US@rg=dezzzz and friends: the @ part is a region
+                // override, not something locale(1) knows about
+                .map(|s| s.trim().split('@').next().unwrap_or_default().to_string())
                 .filter(|s| !s.is_empty())
                 .map(|s| format!("{s}.UTF-8"))
                 .unwrap_or_else(|| "en_US.UTF-8".into())

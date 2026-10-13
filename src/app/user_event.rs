@@ -55,6 +55,20 @@ impl App {
                     .write(formatter(&text).into_bytes());
             }
             UserEvent::ConfigReload(config) => self.reload_config(config),
+
+            UserEvent::ColorRequest(id, index, formatter) => {
+                let config = &self.config;
+
+                if let Some(runtime) = self.runtime.as_ref() {
+                    runtime.answer_color(id, index, &*formatter, config);
+                }
+            }
+
+            UserEvent::SizeRequest(id, formatter) => {
+                if let Some(runtime) = self.runtime() {
+                    runtime.answer_size(id, &*formatter);
+                }
+            }
         }
     }
 }

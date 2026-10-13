@@ -70,6 +70,24 @@ impl App {
             return;
         }
 
+        // alt screen has no scrollback: less, man and friends get arrows
+        // instead, like xterm's alternateScroll
+        if let Some(runtime) = self.runtime() {
+            let mode = runtime.terminal().mode();
+
+            if mode.contains(TermMode::ALT_SCREEN | TermMode::ALTERNATE_SCROLL) {
+                let arrow = crate::input::arrow(lines > 0, mode);
+                let mut out = Vec::with_capacity(arrow.len() * lines.unsigned_abs() as usize);
+
+                for _ in 0..lines.unsigned_abs() {
+                    out.extend_from_slice(arrow);
+                }
+
+                runtime.terminal().write(out);
+                return;
+            }
+        }
+
         if let Some(runtime) = self.runtime_mut() {
             runtime.terminal_mut().scroll(lines);
             runtime.window.request_redraw();
@@ -133,6 +151,22 @@ impl App {
         };
 
         let pressed = state == ElementState::Pressed;
+        let left = button == MouseButton::Left;
+
+        // the tab bar belongs to us, not to the program: checked before mouse
+        // reporting, so tabs stay clickable while vim or tmux own the mouse.
+        // the matching release is swallowed too
+        if left {
+            if pressed && self.click_tab() {
+                self.input.bar_click = true;
+                return;
+            }
+
+            if !pressed && std::mem::take(&mut self.input.bar_click) {
+                return;
+            }
+        }
+
         let bit = 1 << code;
 
         if pressed {
@@ -154,7 +188,7 @@ impl App {
             return;
         }
 
-        if button != MouseButton::Left {
+        if !left {
             return;
         }
 
@@ -163,17 +197,6 @@ impl App {
         if !pressed {
             self.input.autoscroll_at = None;
             return;
-        }
-
-        if button == MouseButton::Left {
-            if pressed && self.click_tab() {
-                self.input.bar_click = true;
-                return;
-            }
-
-            if !pressed && std::mem::take(&mut self.input.bar_click) {
-                return;
-            }
         }
 
         let Some((point, side)) = self.point_under_mouse() else {

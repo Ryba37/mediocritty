@@ -21,7 +21,7 @@ cargo packager --release # and then you will have .dmg and .app in target/releas
 
 ## config
 
-config is stored at ~/.config/mediocritty/config.toml
+config is stored at ~/.config/mediocritty/config.toml and reloads on save, no restart needed
 
 example with all options:
 
@@ -30,6 +30,7 @@ lines_per_notch = 3.0
 multi_click_window_ms = 400
 autoscroll_interval_ms = 25
 autoscroll_speed = 1.0
+osc52 = "copy" # "disabled", "copy", "paste" or "copypaste"
 
 [theme]
 background = "#1d2021"
@@ -72,6 +73,26 @@ hollow_cursor_thickness = 0.1
 [shell]
 locale = "en_US.UTF-8"
 ```
+
+some notes:
+
+- `osc52` decides what programs (ssh sessions too) can do with your clipboard. `copy` lets them set it but never read it, `paste` and `copypaste` let anything in the terminal read your clipboard, so think twice
+- `locale` only sets `LANG`. if it's not set, `LANG` from the environment is used, then your system locale, then `en_US.UTF-8`. your own `LC_*` from shell rc are left alone
+- chars missing from `family` and `fallback` are looked up in system fonts, so `fallback` is only for picking which font wins
+- values out of range fall back to defaults instead of breaking things: `size` 1-512, `opacity` and `dim_strength` 0-1, `gamma` 0.01-10, `contrast` 0-100, `blur` up to 100, `hollow_cursor_thickness` 0.01-0.5
+
+## keys
+
+| keys | what |
+| --- | --- |
+| cmd+t | new tab |
+| cmd+w | close tab |
+| cmd+1..8 | go to tab |
+| cmd+9 | last tab |
+| cmd+shift+[ / ] | previous / next tab |
+| cmd+c / cmd+v | copy / paste |
+| shift+mouse | select text even when a program grabbed the mouse |
+| left option | alt |
 
 ## any problems?
 

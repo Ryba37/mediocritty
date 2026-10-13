@@ -8,7 +8,7 @@ use objc2_quartz_core::{CAMetalDrawable, CATransaction};
 use winit::window::Window;
 
 use crate::{
-    color::{clear_color, linear},
+    color::clear_color,
     config::Config,
     font::{Atlas, Metrics},
     gpu::metal::{
@@ -36,6 +36,9 @@ pub struct MetalCtx {
     emoji_pipeline: Pipeline,
     bg_pipeline: Pipeline,
     underline_pipeline: Pipeline,
+    // pipelines bake the opacity in (pixel format, GAMMA_WEIGHT), so they
+    // are rebuilt only when it changes
+    opacity: f32,
     buffers: Buffers,
     atlas_texture: AtlasTexture,
     emoji_texture: AtlasTexture,
@@ -43,34 +46,51 @@ pub struct MetalCtx {
     frames: Frames,
 }
 
+struct Pipelines {
+    glyph: Pipeline,
+    emoji: Pipeline,
+    bg: Pipeline,
+    underline: Pipeline,
+}
+
+fn pipelines(device: &types::Device, opacity: f32) -> Result<Pipelines, String> {
+    Ok(Pipelines {
+        glyph: pipeline::glyph(device, opacity)?,
+        emoji: pipeline::emoji(device, opacity)?,
+        bg: pipeline::bg(device, opacity)?,
+        underline: pipeline::underline(device, opacity)?,
+    })
+}
+
+fn text_uniforms(config: &Config) -> (f32, f32) {
+    (
+        1.0 / config.font.gamma.max(0.01),
+        1.0 + config.font.contrast.clamp(0.0, 100.0) * 0.01,
+    )
+}
+
 impl MetalCtx {
     pub fn new(
         window: &Window,
         metrics: Metrics,
-        atlas: &Atlas,
-        emoji: &Atlas,
+        atlas: &mut Atlas,
+        emoji: &mut Atlas,
         config: &Config,
     ) -> Result<Self, String> {
-        let context = Context::new(
-            window,
-            config.theme.background,
-            config.theme.opacity,
-            config.theme.blur,
-        )?;
-        let glyph_pipeline = pipeline::glyph(context.device(), config.theme.opacity)?;
-        let emoji_pipeline = pipeline::emoji(context.device(), config.theme.opacity)?;
-        let bg_pipeline = pipeline::bg(context.device(), config.theme.opacity)?;
-        let underline_pipeline = pipeline::underline(context.device(), config.theme.opacity)?;
+        let opacity = config.theme.opacity;
+        let context = Context::new(window, config.theme.background, opacity, config.theme.blur)?;
+        let p = pipelines(context.device(), opacity)?;
 
         let size = window.inner_size();
+        let (gamma, contrast) = text_uniforms(config);
         let uniforms = Uniforms {
             cell: [metrics.cell_width as f32, metrics.cell_height as f32],
             screen: [size.width as f32, size.height as f32],
             atlas: [atlas.width() as f32, atlas.height() as f32],
             cols: atlas.cols(),
             pad: 0,
-            gamma: 1.0 / config.font.gamma.max(0.01),
-            contrast: 1.0 + config.font.contrast.clamp(0.0, 100.0) * 0.01,
+            gamma,
+            contrast,
             emoji_atlas: [emoji.width() as f32, emoji.height() as f32],
             emoji_cols: emoji.cols(),
             emoji_pad: 0,
@@ -86,16 +106,47 @@ impl MetalCtx {
 
         Ok(Self {
             context,
-            glyph_pipeline,
-            emoji_pipeline,
-            bg_pipeline,
-            underline_pipeline,
+            glyph_pipeline: p.glyph,
+            emoji_pipeline: p.emoji,
+            bg_pipeline: p.bg,
+            underline_pipeline: p.underline,
+            opacity,
             buffers,
             atlas_texture,
             emoji_texture,
-            background: clear_color(config.theme.background.0, config.theme.opacity),
+            background: clear_color(config.theme.background.0, opacity),
             frames: Frames::new(FRAMES_IN_FLIGHT as isize),
         })
+    }
+
+    // config reload: keeps device, queue, layer and buffers, swaps only what
+    // the new config touches. new atlases are picked up by the next sync
+    pub fn reconfigure(
+        &mut self,
+        window: &Window,
+        metrics: Metrics,
+        config: &Config,
+    ) -> Result<(), String> {
+        let opacity = config.theme.opacity;
+
+        if opacity != self.opacity {
+            let p = pipelines(self.context.device(), opacity)?;
+            self.glyph_pipeline = p.glyph;
+            self.emoji_pipeline = p.emoji;
+            self.bg_pipeline = p.bg;
+            self.underline_pipeline = p.underline;
+            self.opacity = opacity;
+        }
+
+        self.context
+            .apply_appearance(window, config.theme.background, opacity, config.theme.blur);
+        self.background = clear_color(config.theme.background.0, opacity);
+
+        let (gamma, contrast) = text_uniforms(config);
+        self.buffers.set_text(gamma, contrast);
+        self.buffers.set_metrics(metrics);
+
+        Ok(())
     }
 
     pub fn resize(&mut self, width: u32, height: u32, scale_factor: f64) {
@@ -106,7 +157,7 @@ impl MetalCtx {
     fn sync_atlas(&mut self, atlas: &mut Atlas, emoji: &mut Atlas) {
         if self.atlas_texture.sync(self.context.device(), atlas) {
             self.buffers
-                .set_atlas([atlas.width() as f32, atlas.height() as f32]);
+                .set_atlas([atlas.width() as f32, atlas.height() as f32], atlas.cols());
         }
 
         if self.emoji_texture.sync(self.context.device(), emoji) {
@@ -115,7 +166,7 @@ impl MetalCtx {
         }
     }
 
-    fn upload(&mut self, frame: &Frame) -> Result<(), String> {
+    fn upload(&mut self, frame: &Frame) -> Result<usize, String> {
         self.buffers.upload(
             self.context.device(),
             frame.glyphs,
@@ -129,13 +180,21 @@ impl MetalCtx {
         let mut guard = Guards::new(&self.frames);
 
         self.sync_atlas(atlas, emoji);
-        if let Err(e) = self.upload(frame) {
-            eprintln!("{e}");
-            return;
-        }
 
+        // drawable before upload: a frame that bails out must not touch the
+        // instance buffers. the slot index only advances on commit, so a
+        // skipped frame never leaves a buffer the gpu still reads one step
+        // closer to being overwritten
         let Some(drawable) = self.context.layer().nextDrawable() else {
             return;
+        };
+
+        let slot = match self.upload(frame) {
+            Ok(slot) => slot,
+            Err(e) => {
+                eprintln!("{e}");
+                return;
+            }
         };
 
         unsafe {
@@ -160,6 +219,7 @@ impl MetalCtx {
             };
 
             self.buffers.bind_common(&encoder);
+            self.buffers.set_frame(slot);
 
             if self.buffers.bg_count() > 0 {
                 encoder.setRenderPipelineState(&self.bg_pipeline);

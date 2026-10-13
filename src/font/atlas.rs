@@ -2,10 +2,17 @@ use std::collections::HashMap;
 
 use crate::font::Bitmap;
 
-const INITIAL_COLS: u32 = 16;
+// every mac that runs metal 2 supports 16k textures, so this is the ceiling
+// for both axes. the atlas never asks the gpu for more than this
+pub const MAX_TEXTURE_DIM: u32 = 16384;
+
+// columns are fixed for the atlas' life (a slot index maps to x/y through
+// them), so pick enough that growing rows alone reaches a big capacity
+const MAX_COLS: u32 = 64;
 const INITIAL_ROWS: u32 = 16;
 
 const CHAR_BITS: u32 = 21;
+const STYLE_BITS: u32 = 2;
 
 // bit 31 of a returned/stored cell index marks a wide (2-slot) glyph;
 // GlyphInstance::cell in layout.rs carries this bit straight through to
@@ -24,6 +31,7 @@ pub struct Atlas {
     bpp: u32,
     cols: u32,
     rows: u32,
+    max_rows: u32,
     map: HashMap<u32, u32>,
     next: u32,
     dirty: Vec<u32>,
@@ -31,21 +39,32 @@ pub struct Atlas {
 }
 
 impl Atlas {
-    pub fn new(cell_width: u32, cell_height: u32, bpp: u32) -> Self {
-        let size = (INITIAL_COLS * cell_width * bpp * INITIAL_ROWS * cell_height) as usize;
+    // max_slots caps memory below the texture limit: a full 16k color atlas
+    // is ~140MB on each side of the bus, mask glyphs are a quarter the size
+    pub fn new(cell_width: u32, cell_height: u32, bpp: u32, max_slots: u32) -> Self {
+        let cell_width = cell_width.max(1);
+        let cell_height = cell_height.max(1);
+        let cols = (MAX_TEXTURE_DIM / cell_width).clamp(2, MAX_COLS);
+        let max_rows = (MAX_TEXTURE_DIM / cell_height)
+            .min(max_slots.div_ceil(cols))
+            .max(1);
+        let rows = INITIAL_ROWS.min(max_rows);
 
-        Self {
-            data: vec![0; size],
+        let mut atlas = Self {
+            data: Vec::new(),
             cell_width,
             cell_height,
             bpp,
-            cols: INITIAL_COLS,
-            rows: INITIAL_ROWS,
+            cols,
+            rows,
+            max_rows,
             map: HashMap::new(),
             next: 0,
             dirty: Vec::new(),
             resized: true,
-        }
+        };
+        atlas.data = vec![0; atlas.byte_size()];
+        atlas
     }
 
     // texture width in pixels
@@ -67,36 +86,37 @@ impl Atlas {
     }
 
     fn byte_size(&self) -> usize {
-        (self.row_bytes() * self.height()) as usize
+        self.row_bytes() as usize * self.height() as usize
     }
 
-    fn grow(&mut self) {
-        self.rows *= 2;
+    fn grow(&mut self) -> bool {
+        if self.rows >= self.max_rows {
+            return false;
+        }
+
+        self.rows = (self.rows * 2).min(self.max_rows);
         self.data.resize(self.byte_size(), 0);
         self.resized = true;
         self.dirty.clear();
+        true
     }
 
-    fn alloc(&mut self) -> u32 {
-        if self.next >= self.cols * self.rows {
-            self.grow();
+    // none once the texture is at the gpu limit; the cache then resets
+    fn alloc(&mut self, slots: u32) -> Option<u32> {
+        // a pair can't straddle a row end, its pixels must be contiguous
+        if slots == 2 && self.next % self.cols == self.cols - 1 {
+            self.next += 1;
+        }
+
+        while self.next + slots > self.cols * self.rows {
+            if !self.grow() {
+                return None;
+            }
         }
 
         let n = self.next;
-        self.next += 1;
-        n
-    }
-
-    // reserves two horizontally adjacent slots so their pixels are
-    // contiguous in memory, giving a wide glyph one 2*cell_width canvas.
-    fn alloc_wide(&mut self) -> u32 {
-        if self.next % self.cols == self.cols - 1 {
-            self.alloc(); // last column: waste it, pair can't fit
-        }
-
-        let n = self.alloc();
-        self.alloc();
-        n
+        self.next += slots;
+        Some(n)
     }
 
     fn write(&mut self, n: u32, cell_cols: u32, bitmap: &Bitmap) {
@@ -123,42 +143,54 @@ impl Atlas {
                 dst[x..x + w].copy_from_slice(&src[..w]);
             });
 
-        for slot in n..n + cell_cols {
-            self.dirty.push(slot);
-        }
+        // only the row matters to the uploader
+        self.dirty.push(n);
     }
 
-    pub fn insert_glyph(&mut self, bitmap: &Bitmap) -> u32 {
-        let n = self.alloc();
+    pub fn insert_glyph(&mut self, bitmap: &Bitmap) -> Option<u32> {
+        let n = self.alloc(1)?;
         self.write(n, 1, bitmap);
-        n
+        Some(n)
     }
 
-    pub fn insert(&mut self, key: u32, bitmap: &Bitmap, wide: bool) -> u32 {
+    pub fn insert(&mut self, key: u32, bitmap: &Bitmap, wide: bool) -> Option<u32> {
         debug_assert!(!self.map.contains_key(&key));
 
         let tagged = if wide {
-            let slot = self.alloc_wide();
+            let slot = self.alloc(2)?;
             self.write(slot, 2, bitmap);
             slot | WIDE_BIT
         } else {
-            self.insert_glyph(bitmap)
+            self.insert_glyph(bitmap)?
         };
 
         self.map.insert(key, tagged);
-        tagged
+        Some(tagged)
     }
 
     // for an atlas whose slot is already two cells wide: one slot per glyph,
     // WIDE_BIT only says how much of it to sample
-    pub fn insert_wide_slot(&mut self, key: u32, bitmap: &Bitmap, wide: bool) -> u32 {
+    pub fn insert_wide_slot(&mut self, key: u32, bitmap: &Bitmap, wide: bool) -> Option<u32> {
         debug_assert!(!self.map.contains_key(&key));
 
-        let n = self.insert_glyph(bitmap);
+        let n = self.insert_glyph(bitmap)?;
         let tagged = if wide { n | WIDE_BIT } else { n };
 
         self.map.insert(key, tagged);
-        tagged
+        Some(tagged)
+    }
+
+    // drops every glyph and shrinks back. a fresh texture is made on the next
+    // sync, frames still in flight keep sampling the old one
+    pub fn clear(&mut self) {
+        self.map.clear();
+        self.next = 0;
+        self.rows = INITIAL_ROWS.min(self.max_rows);
+        self.data.clear();
+        self.data.resize(self.byte_size(), 0);
+        self.data.shrink_to_fit();
+        self.dirty.clear();
+        self.resized = true;
     }
 
     pub fn take_dirty(&mut self) -> Vec<u32> {
@@ -177,12 +209,19 @@ impl Atlas {
         self.cols
     }
 
-    pub fn take_resized(&mut self) -> bool {
-        std::mem::take(&mut self.resized)
+    pub fn needs_realloc(&self) -> bool {
+        self.resized
+    }
+
+    // called once the gpu side really has the new texture, so a failed
+    // allocation is retried instead of uploading into a texture too small
+    pub fn realloc_done(&mut self) {
+        self.resized = false;
+        self.dirty.clear();
     }
 
     pub fn alias(&mut self, key: u32, cell: u32) {
-        debug_assert!(cell < self.next);
+        debug_assert!(cell & !(WIDE_BIT | EXACT_BIT) < self.next);
         self.map.insert(key, cell);
     }
 
@@ -194,6 +233,7 @@ impl Atlas {
     }
 }
 
-pub fn key(ch: char, style: u8) -> u32 {
-    ch as u32 | ((style as u32) << CHAR_BITS)
+// the same char drawn one and two cells wide are different bitmaps
+pub fn key(ch: char, style: u8, wide: bool) -> u32 {
+    ch as u32 | ((style as u32) << CHAR_BITS) | ((wide as u32) << (CHAR_BITS + STYLE_BITS))
 }
